@@ -5,7 +5,8 @@ import {
   PromptExampleFactory,
   UIExampleFactory,
 } from "./modules/examples";
-import { ChatPaneSection } from "./modules/chat";
+import { ChatPaneSection, sendToSidebarChat, openSidebarAndShowChat } from "./modules/chat";
+import { ContextMenu } from "./modules/contextMenu";
 import { getString, initLocale } from "./utils/locale";
 import { registerPrefsScripts } from "./modules/preferenceScript";
 import { createZToolkit } from "./utils/ztoolkit";
@@ -19,19 +20,21 @@ async function onStartup() {
 
   initLocale();
 
-  BasicExampleFactory.registerPrefs();
+  //BasicExampleFactory.registerPrefs();
 
-  BasicExampleFactory.registerNotifier();
+  //BasicExampleFactory.registerNotifier();
 
-  KeyExampleFactory.registerShortcuts();
+  //KeyExampleFactory.registerShortcuts();
 
-  await UIExampleFactory.registerExtraColumn();
+  //await UIExampleFactory.registerExtraColumn();
 
-  await UIExampleFactory.registerExtraColumnWithCustomCell();
+  //await UIExampleFactory.registerExtraColumnWithCustomCell();
 
-  UIExampleFactory.registerItemPaneCustomInfoRow();
+  //UIExampleFactory.registerItemPaneCustomInfoRow();
 
   ChatPaneSection.registerChatPaneSection();
+
+  ContextMenu.setup();
 
   await Promise.all(
     Zotero.getMainWindows().map((win) => onMainWindowLoad(win)),
@@ -67,19 +70,19 @@ async function onMainWindowLoad(win: _ZoteroTypes.MainWindow): Promise<void> {
     text: `[30%] ${getString("startup-begin")}`,
   });
 
-  UIExampleFactory.registerStyleSheet(win);
+  //UIExampleFactory.registerStyleSheet(win);
 
-  UIExampleFactory.registerRightClickMenuItem();
+  //UIExampleFactory.registerRightClickMenuItem();
 
-  UIExampleFactory.registerRightClickMenuPopup(win);
+  //UIExampleFactory.registerRightClickMenuPopup(win);
 
-  UIExampleFactory.registerWindowMenuWithSeparator();
+  //UIExampleFactory.registerWindowMenuWithSeparator();
 
-  PromptExampleFactory.registerNormalCommandExample();
+  //PromptExampleFactory.registerNormalCommandExample();
 
-  PromptExampleFactory.registerAnonymousCommandExample(win);
+  //PromptExampleFactory.registerAnonymousCommandExample(win);
 
-  PromptExampleFactory.registerConditionalCommandExample();
+  //PromptExampleFactory.registerConditionalCommandExample();
 
   await Zotero.Promise.delay(1000);
 

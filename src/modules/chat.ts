@@ -10,6 +10,75 @@ const chatsByItem: Record<number, ChatEntry[]> = {};
 
 let paneKey = "";
 
+// Global reference to the current render function for external updates
+let currentRenderMessages: (() => void) | null = null;
+let currentItemID: number | null = null;
+let currentBody: HTMLElement | null = null;
+
+/**
+ * Send a message to the sidebar chat from external sources (e.g., context menu, popup).
+ * Opens the sidebar if not already open and scrolls to the chat pane.
+ */
+export function sendToSidebarChat(text: string, itemID?: number) {
+  const mainWin = Zotero.getMainWindow();
+  if (!mainWin) return;
+
+  // Use the provided itemID or the currently selected item
+  const targetItemID = itemID ?? currentItemID ?? Zotero.getActiveZoteroPane()?.getSelectedItems()?.[0]?.id;
+  if (!targetItemID) {
+    ztoolkit.log("No item selected to send message to");
+    return;
+  }
+
+  // Ensure chat history exists for this item
+  if (!chatsByItem[targetItemID]) {
+    chatsByItem[targetItemID] = [];
+  }
+
+  // Add the message
+  chatsByItem[targetItemID].push({ text, from: "me" });
+  // Echo back as if from other party (for now, until AI integration)
+  chatsByItem[targetItemID].push({ text, from: "other" });
+
+  // Open sidebar and scroll to chat pane
+  openSidebarAndShowChat(mainWin);
+
+  // If we have a render function and it's for the same item, update the UI
+  if (currentRenderMessages && currentItemID === targetItemID) {
+    currentRenderMessages();
+  }
+}
+
+/**
+ * Opens the sidebar if closed and scrolls to the chat pane.
+ */
+export function openSidebarAndShowChat(win?: _ZoteroTypes.MainWindow) {
+  const mainWin = win ?? Zotero.getMainWindow();
+  if (!mainWin) return;
+
+  const ZoteroContextPane = mainWin.ZoteroContextPane;
+
+  // Open the context pane if not visible
+  if (ZoteroContextPane && !ZoteroContextPane.splitter?.getAttribute("state")?.includes("open")) {
+    // Try to open the pane
+    const splitter = ZoteroContextPane.splitter;
+    if (splitter) {
+      splitter.setAttribute("state", "open");
+    }
+  }
+
+  // Scroll to our chat pane if we have a paneKey
+  if (paneKey && currentBody) {
+    const details = currentBody.closest("item-details");
+    if (details) {
+      // Resize to full height
+      onUpdateHeight({ body: currentBody });
+      // @ts-expect-error 'item-details' is a custom element on Zotero
+      details.scrollToPane(paneKey);
+    }
+  }
+}
+
 export class ChatPaneSection {
   static registerChatPaneSection() {
     const key = Zotero.ItemPaneManager.registerSection({
@@ -71,6 +140,10 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
     chatsByItem[itemID] = [];
   }
 
+  // Store references for external access
+  currentItemID = itemID;
+  currentBody = body;
+
   const container = doc.createElement("div");
   container.className = "chat-pane";
   container.style.flex = "1"; // fill available height from Zotero pane
@@ -108,10 +181,15 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
       const p = doc.createElement("div");
       p.textContent = msg.text;
       p.className = `chat-pane__message chat-pane__message--${msg.from}`;
+      p.style.whiteSpace = "pre-wrap"; // Preserve line breaks and wrap text
       messagesBox.appendChild(p);
     }
     messagesBox.scrollTop = messagesBox.scrollHeight;
   };
+
+  // Store render function for external updates
+  currentRenderMessages = renderMessages;
+
   renderMessages();
 
   // Outer container for input area
