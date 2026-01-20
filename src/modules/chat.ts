@@ -37,7 +37,7 @@ export function sendToSidebarChat(text: string, itemID?: number) {
   chatsByItem[targetItemID].push({ text, from: "other" });
 
   // Open sidebar and scroll to chat pane
-  openSidebarAndShowChat(mainWin);
+  openSidebarAndShowChat(mainWin, targetItemID);
 
   // If we have a render function and it's for the same item, update the UI
   if (currentRenderMessages && currentItemID === targetItemID) {
@@ -47,8 +47,13 @@ export function sendToSidebarChat(text: string, itemID?: number) {
 
 /**
  * Opens the sidebar if closed and scrolls to the chat pane.
+ * Optionally prefills the input with text.
  */
-export function openSidebarAndShowChat(win?: _ZoteroTypes.MainWindow) {
+export function openSidebarAndShowChat(
+  win?: _ZoteroTypes.MainWindow,
+  itemID?: number,
+  prefillText?: string
+) {
   const mainWin = win ?? Zotero.getMainWindow();
   if (!mainWin) return;
 
@@ -63,16 +68,88 @@ export function openSidebarAndShowChat(win?: _ZoteroTypes.MainWindow) {
     }
   }
 
-  // Scroll to our chat pane if we have a paneKey
-  if (paneKey && currentBody) {
-    const details = currentBody.closest("item-details");
-    if (details) {
-      // Resize to full height
-      onUpdateHeight({ body: currentBody });
-      // @ts-expect-error 'item-details' is a custom element on Zotero
-      details.scrollToPane(paneKey);
+  // Don't switch items if user is in a reader - just open the sidebar
+  // Switching items would close the PDF reader
+  const readerTab = Zotero.Reader.getByTabID(mainWin.Zotero_Tabs.selectedID);
+
+  // If we're in a reader, don't try to switch items at all
+  // Just use the current sidebar content
+  if (!readerTab) {
+    // If we have an itemID, check if it's an attachment and get parent if needed
+    let targetItemID = itemID;
+    if (itemID) {
+      const item = Zotero.Items.get(itemID);
+      if (item && item.isAttachment()) {
+        // If it's an attachment, use the parent item for the chat
+        const parentItemID = item.parentItemID;
+        if (parentItemID) {
+          targetItemID = parentItemID;
+          ztoolkit.log(`Item ${itemID} is an attachment, using parent ${parentItemID}`);
+        }
+      }
+    }
+
+    // If targetItemID is provided and different from current, switch to that item
+    if (targetItemID && targetItemID !== currentItemID) {
+      const zoteroPane = Zotero.getActiveZoteroPane();
+      if (zoteroPane) {
+        const item = Zotero.Items.get(targetItemID);
+        if (item) {
+          zoteroPane.selectItem(targetItemID);
+        }
+      }
     }
   }
+
+  // Wait a bit for the pane to render if needed
+  setTimeout(() => {
+    // Scroll to our chat pane if we have a paneKey
+    if (paneKey && currentBody && currentBody.isConnected) {
+      const details = currentBody.closest("item-details");
+      if (details) {
+        // First, uncollapse the section if it's collapsed
+        const section = currentBody.closest("item-pane-custom-section");
+        if (section) {
+          const head = section.querySelector(".head") as HTMLElement;
+          if (head) {
+            const ariaExpanded = head.getAttribute("aria-expanded");
+            //ztoolkit.log("Section aria-expanded:", ariaExpanded);
+
+            // If aria-expanded is "false", the section is collapsed - expand it
+            if (ariaExpanded === "false") {
+              //ztoolkit.log("Section is collapsed, clicking head to expand");
+              head.click(); // Toggle to expand
+            } else {
+              //ztoolkit.log("Section is already expanded");
+            }
+          }
+        }
+
+        // Then resize to full height and scroll to pane
+        onUpdateHeight({ body: currentBody });
+        // @ts-expect-error 'item-details' is a custom element on Zotero
+        details.scrollToPane(paneKey);
+
+        // If prefillText is provided, set it in the input
+        if (prefillText) {
+          const input = currentBody.querySelector(".chat-pane__input") as HTMLTextAreaElement;
+          if (input) {
+            input.value = prefillText;
+            input.focus();
+            // Move cursor to end
+            input.setSelectionRange(input.value.length, input.value.length);
+            // Trigger input event to update send button state
+            const doc = input.ownerDocument;
+            if (doc) {
+              const inputEvent = doc.createEvent("HTMLEvents");
+              inputEvent.initEvent("input", true, false);
+              input.dispatchEvent(inputEvent);
+            }
+          }
+        }
+      }
+    }
+  }, 50);
 }
 
 export class ChatPaneSection {
@@ -99,8 +176,10 @@ export class ChatPaneSection {
           onClick: ({ body }) => {
             const details = body.closest("item-details");
             onUpdateHeight({ body });
-            // @ts-expect-error 'item-details' is a custom element on Zotero
-            details.scrollToPane(paneKey);
+            if (details) {
+              // @ts-expect-error 'item-details' is a custom element on Zotero
+              details.scrollToPane(paneKey);
+            }
           },
         },
       ],
@@ -263,22 +342,38 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
 
   // Add resize listener
   const handleResize = () => {
-    onUpdateHeight({ body });
+    // Check if body is still connected to the DOM before updating
+    if (body && body.isConnected) {
+      onUpdateHeight({ body });
+    } else {
+      // Remove listener if body is no longer in DOM
+      win?.removeEventListener("resize", handleResize);
+    }
   };
 
   const win = doc.defaultView;
   win?.addEventListener("resize", handleResize);
-
-  // Cleanup on re-render (optional, prevents duplicate listeners)
-  const observer = new MutationObserver(() => {
-    win?.removeEventListener("resize", handleResize);
-  });
-  observer.observe(body, { childList: true });
 }
 
 function onUpdateHeight({ body }: { body: HTMLElement }) {
+  // Double-check that body is still in the DOM
+  if (!body || !body.isConnected) {
+    return;
+  }
+
   const details = body.closest("item-details");
   const head = body.closest("item-pane-custom-section")?.querySelector(".head");
 
-  body.style.height = `${details!.querySelector(".zotero-view-item")!.clientHeight - head!.clientHeight - 8}px`;
+  if (!details || !head) {
+    // Silently return - this is normal during certain render states
+    return;
+  }
+
+  const viewItem = details.querySelector(".zotero-view-item");
+  if (!viewItem) {
+    // Silently return - this is normal during certain render states
+    return;
+  }
+
+  body.style.height = `${viewItem.clientHeight - (head as HTMLElement).clientHeight - 8}px`;
 }
