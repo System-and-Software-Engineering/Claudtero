@@ -160,12 +160,31 @@ export class ChatPaneSection {
 
       header: {
         l10nID: getLocaleID("item-section-chat-head-text"),
-        icon: "chrome://zotero/skin/20/universal/save.svg",
+        icon: `chrome://${config.addonRef}/content/icons/ai-icon.svg`,
       },
 
       sidenav: {
         l10nID: getLocaleID("item-section-chat-sidenav-tooltip"),
-        icon: "chrome://zotero/skin/20/universal/save.svg",
+        icon: `chrome://${config.addonRef}/content/icons/ai-icon-small.svg`,
+      },
+      onItemChange: ({ item }) => {
+        // Only show for PDF attachments
+        if (!item) return false;
+
+        // Check if it's a PDF attachment
+        if (item.isAttachment() && item.attachmentContentType === "application/pdf") {
+          return true;
+        }
+
+        // Check if it's a regular item with PDF attachments
+        if (item.isRegularItem()) {
+          const attachments = Zotero.Items.get(item.getAttachments());
+          return attachments.some(
+            (att: Zotero.Item) => att.attachmentContentType === "application/pdf"
+          );
+        }
+
+        return false;
       },
       onRender,
       sectionButtons: [
