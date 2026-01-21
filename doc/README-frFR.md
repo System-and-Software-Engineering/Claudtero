@@ -361,8 +361,8 @@ Cette section montre la structure des répertoires d'un modèle.
 |   |-- bootstrap.js
 |   |-- content
 |   |   |-- icons
-|   |   |   |-- favicon.png
-|   |   |   `-- favicon@0.5x.png
+|   |   |   |-- ai-icon.svg
+|   |   |   `-- ai-icon@0.5x.png
 |   |   |-- preferences.xhtml
 |   |   `-- zoteroPane.css
 |   |-- locale

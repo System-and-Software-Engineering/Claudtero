@@ -1,12 +1,19 @@
 import { config } from "../../package.json";
 import { getString } from "../utils/locale";
+import { getPref } from "../utils/prefs";
+
+const LLM_OPTIONS = [
+  { label: "Local", value: "local" },
+  { label: "OpenAI", value: "openai" },
+  { label: "Goethe Uni", value: "goethe" },
+];
 
 export function registerPrefs() {
   Zotero.PreferencePanes.register({
     pluginID: addon.data.config.addonID,
     src: rootURI + "content/preferences.xhtml",
     label: getString("prefs-title"),
-    image: `chrome://${addon.data.config.addonRef}/content/icons/favicon.png`,
+    image: `chrome://${addon.data.config.addonRef}/content/icons/ai-icon.svg`,
   });
 }
 
@@ -16,125 +23,81 @@ export async function registerPrefsScripts(_window: Window) {
   if (!addon.data.prefs) {
     addon.data.prefs = {
       window: _window,
-      columns: [
-        {
-          dataKey: "title",
-          label: getString("prefs-table-title"),
-          fixedWidth: true,
-          width: 100,
-        },
-        {
-          dataKey: "detail",
-          label: getString("prefs-table-detail"),
-        },
-      ],
-      rows: [
-        {
-          title: "Orange",
-          detail: "It's juicy",
-        },
-        {
-          title: "Banana",
-          detail: "It's sweet",
-        },
-        {
-          title: "Apple",
-          detail: "I mean the fruit APPLE",
-        },
-      ],
     };
   } else {
     addon.data.prefs.window = _window;
   }
-  updatePrefsUI();
   bindPrefEvents();
 }
 
-async function updatePrefsUI() {
-  // You can initialize some UI elements on prefs window
-  // with addon.data.prefs.window.document
-  // Or bind some events to the elements
-  const renderLock = ztoolkit.getGlobal("Zotero").Promise.defer();
-  if (addon.data.prefs?.window == undefined) return;
-  const tableHelper = new ztoolkit.VirtualizedTable(addon.data.prefs?.window)
-    .setContainerId(`${config.addonRef}-table-container`)
-    .setProp({
-      id: `${config.addonRef}-prefs-table`,
-      // Do not use setLocale, as it modifies the Zotero.Intl.strings
-      // Set locales directly to columns
-      columns: addon.data.prefs?.columns,
-      showHeader: true,
-      multiSelect: true,
-      staticColumns: true,
-      disableFontSizeScaling: true,
-    })
-    .setProp("getRowCount", () => addon.data.prefs?.rows.length || 0)
-    .setProp(
-      "getRowData",
-      (index) =>
-        addon.data.prefs?.rows[index] || {
-          title: "no data",
-          detail: "no data",
+function bindPrefEvents() {
+  const doc = addon.data.prefs!.window.document;
+
+  const providerBoxId = `${config.addonRef}-llm-provider-placeholder`;
+  const providerBox = doc.getElementById(providerBoxId);
+
+  if (providerBox) {
+    ztoolkit.UI.replaceElement(
+      {
+        tag: "menulist",
+        id: `zotero-prefpane-${config.addonRef}-llm-provider`,
+        attributes: {
+          value: (getPref("llmProvider") as string) || LLM_OPTIONS[0].value,
+          native: "true",
+          preference: "llmProvider",
         },
-    )
-    // Show a progress window when selection changes
-    .setProp("onSelectionChange", (selection) => {
-      new ztoolkit.ProgressWindow(config.addonName)
-        .createLine({
-          text: `Selected line: ${addon.data.prefs?.rows
-            .filter((v, i) => selection.isSelected(i))
-            .map((row) => row.title)
-            .join(",")}`,
-          progress: 100,
-        })
-        .show();
-    })
-    // When pressing delete, delete selected line and refresh table.
-    // Returning false to prevent default event.
-    .setProp("onKeyDown", (event: KeyboardEvent) => {
-      if (event.key == "Delete" || (Zotero.isMac && event.key == "Backspace")) {
-        addon.data.prefs!.rows =
-          addon.data.prefs?.rows.filter(
-            (v, i) => !tableHelper.treeInstance.selection.isSelected(i),
-          ) || [];
-        tableHelper.render();
-        return false;
-      }
-      return true;
-    })
-    // For find-as-you-type
-    .setProp(
-      "getRowString",
-      (index) => addon.data.prefs?.rows[index].title || "",
-    )
-    // Render the table.
-    .render(-1, () => {
-      renderLock.resolve();
-    });
-  await renderLock.promise;
-  ztoolkit.log("Preference table rendered!");
+        listeners: [
+          {
+            type: "command",
+            listener: (_e: Event) => {
+              syncLlmSettingsVisibility();
+            },
+          },
+        ],
+        children: [
+          {
+            tag: "menupopup",
+            children: LLM_OPTIONS.map((option) => ({
+              tag: "menuitem",
+              attributes: {
+                label: option.label,
+                value: option.value,
+              },
+            })),
+          },
+        ],
+      },
+      providerBox,
+    );
+  }
+
+  syncLlmSettingsVisibility();
 }
 
-function bindPrefEvents() {
-  addon.data
-    .prefs!.window.document?.querySelector(
-      `#zotero-prefpane-${config.addonRef}-enable`,
-    )
-    ?.addEventListener("command", (e: Event) => {
-      ztoolkit.log(e);
-      addon.data.prefs!.window.alert(
-        `Successfully changed to ${(e.target as XUL.Checkbox).checked}!`,
-      );
-    });
+function syncLlmSettingsVisibility() {
+  const doc = addon.data.prefs!.window.document;
+  const menulist = doc.querySelector(
+    `#zotero-prefpane-${config.addonRef}-llm-provider`,
+  ) as XUL.MenuList | null;
+  const provider =
+    menulist?.value || (getPref("llmProvider") as string) || "local";
+  const localBox = doc.getElementById(
+    `${config.addonRef}-local-settings`,
+  ) as HTMLElement | null;
+  const openaiBox = doc.getElementById(
+    `${config.addonRef}-openai-settings`,
+  ) as HTMLElement | null;
+  const goetheBox = doc.getElementById(
+    `${config.addonRef}-goethe-settings`,
+  ) as HTMLElement | null;
 
-  addon.data
-    .prefs!.window.document?.querySelector(
-      `#zotero-prefpane-${config.addonRef}-input`,
-    )
-    ?.addEventListener("change", (e: Event) => {
-      ztoolkit.log(e);
-      addon.data.prefs!.window.alert(
-        `Successfully changed to ${(e.target as HTMLInputElement).value}!`,
-      );
-    });
+  if (localBox) {
+    localBox.hidden = provider !== "local";
+  }
+  if (openaiBox) {
+    openaiBox.hidden = provider !== "openai";
+  }
+  if (goetheBox) {
+    goetheBox.hidden = provider !== "goethe";
+  }
 }

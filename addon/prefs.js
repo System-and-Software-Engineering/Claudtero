@@ -1,2 +1,4 @@
-pref("enable", true);
-pref("input", "This is input");
+pref("llmProvider", "local");
+pref("localPort", "8000");
+pref("openaiApiKey", "");
+pref("goetheApiKey", "");
