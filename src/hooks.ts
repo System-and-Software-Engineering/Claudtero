@@ -5,10 +5,14 @@ import {
   PromptExampleFactory,
   UIExampleFactory,
 } from "./modules/examples";
-import { ChatPaneSection, sendToSidebarChat, openSidebarAndShowChat } from "./modules/chat";
+import {
+  ChatPaneSection,
+  sendToSidebarChat,
+  openSidebarAndShowChat,
+} from "./modules/chat";
 import { ContextMenu } from "./modules/contextMenu";
 import { getString, initLocale } from "./utils/locale";
-import { registerPrefsScripts } from "./modules/preferenceScript";
+import { registerPrefs, registerPrefsScripts } from "./modules/preferences";
 import { createZToolkit } from "./utils/ztoolkit";
 
 async function onStartup() {
@@ -20,7 +24,7 @@ async function onStartup() {
 
   initLocale();
 
-  //BasicExampleFactory.registerPrefs();
+  registerPrefs();
 
   //BasicExampleFactory.registerNotifier();
 
