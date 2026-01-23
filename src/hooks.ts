@@ -5,8 +5,17 @@ import {
   PromptExampleFactory,
   UIExampleFactory,
 } from "./modules/examples";
+<<<<<<< HEAD
+=======
+import {
+  ChatPaneSection,
+  sendToSidebarChat,
+  openSidebarAndShowChat,
+} from "./modules/chat";
+import { ContextMenu } from "./modules/contextMenu";
+>>>>>>> feature/chat-pane
 import { getString, initLocale } from "./utils/locale";
-import { registerPrefsScripts } from "./modules/preferenceScript";
+import { registerPrefs, registerPrefsScripts } from "./modules/preferences";
 import { createZToolkit } from "./utils/ztoolkit";
 
 async function onStartup() {
@@ -18,21 +27,27 @@ async function onStartup() {
 
   initLocale();
 
-  BasicExampleFactory.registerPrefs();
+  registerPrefs();
 
-  BasicExampleFactory.registerNotifier();
+  //BasicExampleFactory.registerNotifier();
 
-  KeyExampleFactory.registerShortcuts();
+  //KeyExampleFactory.registerShortcuts();
 
-  await UIExampleFactory.registerExtraColumn();
+  //await UIExampleFactory.registerExtraColumn();
 
-  await UIExampleFactory.registerExtraColumnWithCustomCell();
+  //await UIExampleFactory.registerExtraColumnWithCustomCell();
 
-  UIExampleFactory.registerItemPaneCustomInfoRow();
+  //UIExampleFactory.registerItemPaneCustomInfoRow();
 
+<<<<<<< HEAD
   UIExampleFactory.registerItemPaneSection();
 
   UIExampleFactory.registerReaderItemPaneSection();
+=======
+  ChatPaneSection.registerChatPaneSection();
+
+  ContextMenu.setup();
+>>>>>>> feature/chat-pane
 
   await Promise.all(
     Zotero.getMainWindows().map((win) => onMainWindowLoad(win)),
@@ -68,19 +83,19 @@ async function onMainWindowLoad(win: _ZoteroTypes.MainWindow): Promise<void> {
     text: `[30%] ${getString("startup-begin")}`,
   });
 
-  UIExampleFactory.registerStyleSheet(win);
+  //UIExampleFactory.registerStyleSheet(win);
 
-  UIExampleFactory.registerRightClickMenuItem();
+  //UIExampleFactory.registerRightClickMenuItem();
 
-  UIExampleFactory.registerRightClickMenuPopup(win);
+  //UIExampleFactory.registerRightClickMenuPopup(win);
 
-  UIExampleFactory.registerWindowMenuWithSeparator();
+  //UIExampleFactory.registerWindowMenuWithSeparator();
 
-  PromptExampleFactory.registerNormalCommandExample();
+  //PromptExampleFactory.registerNormalCommandExample();
 
-  PromptExampleFactory.registerAnonymousCommandExample(win);
+  //PromptExampleFactory.registerAnonymousCommandExample(win);
 
-  PromptExampleFactory.registerConditionalCommandExample();
+  //PromptExampleFactory.registerConditionalCommandExample();
 
   await Zotero.Promise.delay(1000);
 

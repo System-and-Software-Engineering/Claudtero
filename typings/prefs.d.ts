@@ -7,8 +7,16 @@
 declare namespace _ZoteroTypes {
   interface Prefs {
     PluginPrefsMap: {
-      "enable": boolean;
-      "input": string;
+      "llmProvider": string;
+      "localPort": string;
+      "openaiApiKey": string;
+      "openaiModel": string;
+      "openaiTemp": string;
+      "openaiPrompt": string;
+      "goetheApiKey": string;
+      "goetheModel": string;
+      "goetheTemp": string;
+      "goethePrompt": string;
     };
   }
 }
