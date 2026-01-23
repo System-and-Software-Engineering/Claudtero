@@ -1,5 +1,9 @@
 import { getLocaleID } from "../utils/locale";
 import { config } from "../../package.json";
+import { getAvailableModels, handleChatSend } from "./chat/chatController";
+import type { AIProvider } from "./ai/modelCatalog";
+import { it } from "node:test";
+
 
 type ChatEntry = { text: string; from: "me" | "other" };
 const chatsByItem: Record<number, ChatEntry[]> = {};
@@ -307,15 +311,52 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
   const inputArea = doc.createElement("div");
   inputArea.className = "chat-pane__input-area";
 
+  // Load providers + models from backend
+  const catalog = getAvailableModels();
+  const providers = catalog.providers;
+
+  const providerSelect = doc.createElement("select");
+  providerSelect.className = "chat-pane__model-select";
+
   const modelSelect = doc.createElement("select");
   modelSelect.className = "chat-pane__model-select";
-  ["Claude 4.5", "Claude 3.7", "GPT-4o", "GPT-3.5"].forEach((label) => {
+
+  /**
+   * Helper: rebuild the model select based on the chosen provider
+   */
+  const renderModelsForProvider = (provider: AIProvider) => {
+    modelSelect.textContent = "";
+    const entry = providers.find((p) => p.provider === provider);
+    if (!entry) return;
+
+    for (const m of entry.models) {
+      const opt = doc.createElement("option");
+      opt.value = m.value; // API model id
+      opt.textContent = m.label; // UI label
+      modelSelect.appendChild(opt);
+    }
+
+    // Default to first model
+    modelSelect.value = entry.models[0]?.value ?? "";
+  };
+
+  // Fill provider select
+  for (const p of providers) {
     const opt = doc.createElement("option");
-    opt.value = label;
-    opt.textContent = label;
-    modelSelect.appendChild(opt);
+    opt.value = p.provider;
+    opt.textContent = p.label;
+    providerSelect.appendChild(opt);
+  }
+
+  // Default provider = first in catalog
+  const defaultProvider = providers[0]?.provider ?? "openai";
+  providerSelect.value = defaultProvider;
+  renderModelsForProvider(defaultProvider);
+
+  // Update models when provider changes
+  providerSelect.addEventListener("change", () => {
+    renderModelsForProvider(providerSelect.value as AIProvider);
   });
-  modelSelect.value = "Claude 4.5";
 
   // Inner wrapper for input + send icon
   const inputWrapper = doc.createElement("div");
@@ -341,15 +382,61 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
     sendButton.disabled = !input.value.trim();
   };
 
-  const send = () => {
+  // const send = () => {
+  //   const text = input.value.trim();
+  //   if (!text) return;
+  //   chatsByItem[itemID].push({ text, from: "me" });
+  //   // Echo back as if from other party
+  //   chatsByItem[itemID].push({ text, from: "other" });
+  //   input.value = "";
+  //   renderMessages();
+  //   updateSendState();
+  // };
+
+  const send = async () => {
     const text = input.value.trim();
     if (!text) return;
+
+    const provider = providerSelect.value as AIProvider;
+    const model = modelSelect.value;
+
+    // Show user's message immediately
     chatsByItem[itemID].push({ text, from: "me" });
-    // Echo back as if from other party
-    chatsByItem[itemID].push({ text, from: "other" });
     input.value = "";
     renderMessages();
     updateSendState();
+
+    // Disable UI during request
+    sendButton.disabled = true;
+    input.disabled = true;
+
+    // Add a place holder bubble while waiting
+    const thinking: ChatEntry = { text: "...", from: "other" };
+    chatsByItem[itemID].push(thinking);
+    renderMessages();
+
+    try {
+      // Use itemID as a simple per-item session key
+      const sessionId = String(itemID);
+
+      const result = await handleChatSend({
+        sessionId,
+        provider,
+        model,
+        userText: text,
+      });
+
+      thinking.text = result.assistantText;
+      renderMessages();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      thinking.text = `Error; ${msg}`;
+      renderMessages();
+    } finally {
+      input.disabled = false;
+      sendButton.disabled = !input.value.trim();
+      input.focus();
+    }
   };
 
   sendButton.addEventListener("click", send);
@@ -364,6 +451,7 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
   updateSendState();
 
   // Build hierarchy: input wrapper contains input + send button
+  inputWrapper.appendChild(providerSelect);
   inputWrapper.appendChild(modelSelect);
   inputWrapper.appendChild(sendButton);
 
