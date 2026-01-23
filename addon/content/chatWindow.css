@@ -32,6 +32,8 @@
   white-space: pre-wrap;
   max-width: 90%;
   border: 1px solid #d8d8dc;
+  user-select: text;
+  cursor: text;
 }
 
 .chat-pane__message--me {
