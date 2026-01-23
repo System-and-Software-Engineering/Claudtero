@@ -2,9 +2,9 @@
   "name": "zotero-plugin-template",
   "type": "module",
   "version": "3.1.0",
-  "description": "Zotero Plugin Template",
+  "description": "AI-Chatbot for exploring PDFs",
   "config": {
-    "addonName": "Zotero Plugin Template",
+    "addonName": "Claudtero",
     "addonID": "addontemplate@euclpts.com",
     "addonRef": "addontemplate",
     "addonInstance": "AddonTemplate",

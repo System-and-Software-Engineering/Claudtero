@@ -1,5 +1,10 @@
-pref-title = Addon Template Example
-pref-enable =
-    .label = Enable
-pref-input = Input
-pref-help = { $name } Build { $version } { $time }
+pref-title = Preferences
+pref-llm-provider = LLM Provider
+pref-llm-option-local = Local LLM
+pref-llm-option-openai = OpenAI
+pref-llm-option-goethe = Goethe Uni LLM
+pref-api-key = API Key
+pref-model = Model
+pref-temp = Temperature
+pref-prompt = Prompt
+pref-port = Port

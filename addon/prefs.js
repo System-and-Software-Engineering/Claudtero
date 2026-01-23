@@ -1,2 +1,10 @@
-pref("enable", true);
-pref("input", "This is input");
+pref("llmProvider", "local");
+pref("localPort", "8000");
+pref("openaiApiKey", "");
+pref("openaiModel", "gpt-4");
+pref("openaiTemp", "0.7");
+pref("openaiPrompt", "");
+pref("goetheApiKey", "");
+pref("goetheModel", "");
+pref("goetheTemp", "0.7");
+pref("goethePrompt", "");
