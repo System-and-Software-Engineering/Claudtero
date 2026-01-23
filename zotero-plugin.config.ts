@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { defineConfig } from "zotero-plugin-scaffold";
 import pkg from "./package.json";
 
@@ -31,6 +32,11 @@ export default defineConfig({
         entryPoints: ["src/index.ts"],
         define: {
           __env__: `"${process.env.NODE_ENV}"`,
+
+          // Inject dev keys
+          // TODO: Remove later
+          __OPENAI_API_KEY__: JSON.stringify(process.env.OPENAI_API_KEY ?? ""),
+          __OPENROUTER_API_KEY__: JSON.stringify(process.env.OPENROUTER_API_KEY ?? ""),
         },
         bundle: true,
         target: "firefox115",
