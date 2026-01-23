@@ -20,7 +20,10 @@ export function sendToSidebarChat(text: string, itemID?: number) {
   if (!mainWin) return;
 
   // Use the provided itemID or the currently selected item
-  const targetItemID = itemID ?? currentItemID ?? Zotero.getActiveZoteroPane()?.getSelectedItems()?.[0]?.id;
+  const targetItemID =
+    itemID ??
+    currentItemID ??
+    Zotero.getActiveZoteroPane()?.getSelectedItems()?.[0]?.id;
   if (!targetItemID) {
     ztoolkit.log("No item selected to send message to");
     return;
@@ -52,7 +55,7 @@ export function sendToSidebarChat(text: string, itemID?: number) {
 export function openSidebarAndShowChat(
   win?: _ZoteroTypes.MainWindow,
   itemID?: number,
-  prefillText?: string
+  prefillText?: string,
 ) {
   const mainWin = win ?? Zotero.getMainWindow();
   if (!mainWin) return;
@@ -60,7 +63,10 @@ export function openSidebarAndShowChat(
   const ZoteroContextPane = mainWin.ZoteroContextPane;
 
   // Open the context pane if not visible
-  if (ZoteroContextPane && !ZoteroContextPane.splitter?.getAttribute("state")?.includes("open")) {
+  if (
+    ZoteroContextPane &&
+    !ZoteroContextPane.splitter?.getAttribute("state")?.includes("open")
+  ) {
     // Try to open the pane
     const splitter = ZoteroContextPane.splitter;
     if (splitter) {
@@ -84,7 +90,9 @@ export function openSidebarAndShowChat(
         const parentItemID = item.parentItemID;
         if (parentItemID) {
           targetItemID = parentItemID;
-          ztoolkit.log(`Item ${itemID} is an attachment, using parent ${parentItemID}`);
+          ztoolkit.log(
+            `Item ${itemID} is an attachment, using parent ${parentItemID}`,
+          );
         }
       }
     }
@@ -132,7 +140,9 @@ export function openSidebarAndShowChat(
 
         // If prefillText is provided, set it in the input
         if (prefillText) {
-          const input = currentBody.querySelector(".chat-pane__input") as HTMLTextAreaElement;
+          const input = currentBody.querySelector(
+            ".chat-pane__input",
+          ) as HTMLTextAreaElement;
           if (input) {
             input.value = prefillText;
             input.focus();
@@ -167,24 +177,31 @@ export class ChatPaneSection {
         l10nID: getLocaleID("item-section-chat-sidenav-tooltip"),
         icon: `chrome://${config.addonRef}/content/icons/ai-icon-small.svg`,
       },
-      onItemChange: ({ item }) => {
-        // Only show for PDF attachments
-        if (!item) return false;
+      onItemChange: ({ item, setEnabled, tabType }) => {
+        // First: only enabled in reader context
+        const isReader = tabType === "reader";
 
-        // Check if it's a PDF attachment
-        if (item.isAttachment() && item.attachmentContentType === "application/pdf") {
-          return true;
+        // Second: check if item has PDFs
+        let hasPDF = false;
+        if (item) {
+          if (
+            item.isAttachment() &&
+            item.attachmentContentType === "application/pdf"
+          ) {
+            hasPDF = true;
+          } else if (item.isRegularItem()) {
+            const attachments = Zotero.Items.get(item.getAttachments());
+            hasPDF = attachments.some(
+              (att: Zotero.Item) =>
+                att.attachmentContentType === "application/pdf",
+            );
+          }
         }
 
-        // Check if it's a regular item with PDF attachments
-        if (item.isRegularItem()) {
-          const attachments = Zotero.Items.get(item.getAttachments());
-          return attachments.some(
-            (att: Zotero.Item) => att.attachmentContentType === "application/pdf"
-          );
-        }
-
-        return false;
+        // Enable only if BOTH conditions are true
+        const enabled = isReader && hasPDF;
+        setEnabled(enabled);
+        return enabled;
       },
       onRender,
       sectionButtons: [
