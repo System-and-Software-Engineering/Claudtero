@@ -7,3 +7,4 @@ menuitem-filemenulabel = Claudtero: File Menu
 prefs-title = Claudtero
 tabpanel-lib-tab-label = Lib Tab
 tabpanel-reader-tab-label = Reader Tab
+item-section-chat-fullHeight = Full Height

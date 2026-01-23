@@ -4,6 +4,9 @@
 // @ts-nocheck
 export type FluentMessageId =
   | 'item-info-row-example-label'
+  | 'item-section-chat-fullHeight'
+  | 'item-section-chat-head-text'
+  | 'item-section-chat-sidenav-tooltip'
   | 'item-section-example1-head-text'
   | 'item-section-example1-sidenav-tooltip'
   | 'item-section-example2-button-tooltip'
