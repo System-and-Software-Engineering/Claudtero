@@ -21,13 +21,16 @@
   "homepage": "https://github.com/windingwind/zotero-plugin-template#readme",
   "license": "AGPL-3.0-or-later",
   "scripts": {
-    "start": "zotero-plugin serve",
+    "start": "run-p start:docling start:zotero",
+    "start:docling": "python docling_service.py",
+    "start:zotero": "zotero-plugin serve",
     "build": "zotero-plugin build && tsc --noEmit",
     "lint:check": "prettier --check . && eslint .",
     "lint:fix": "prettier --write . && eslint . --fix",
     "release": "zotero-plugin release",
     "test": "zotero-plugin test",
-    "update-deps": "npm update --save"
+    "update-deps": "npm update --save",
+    "install-py-deps": "pip install -r requirements.txt && pip install git+https://github.com/huggingface/transformers.git"
   },
   "dependencies": {
     "zotero-plugin-toolkit": "^5.1.0-beta.4"

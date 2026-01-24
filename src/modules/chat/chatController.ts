@@ -1,9 +1,9 @@
 import { getDevKeys } from "../ai/keys";
 import { sendChatCompletions, type ChatMessage } from "../ai/chatClient";
 import { getModelCatalog, type AIProvider, type ModelCatalog } from "../ai/modelCatalog";
-import { appendMessage, getSession } from "./sessionStore";
+import { appendMessage, getSession, isNewSession } from "./sessionStore";
 import { DEFAULT_SYSTEM_PROMPT } from "./systemPrompt";
-import { getSelectedPdfText } from "../pdf/getSelectedText";
+import { getSelectedPdfText, getFullPdfText } from "../pdf/getSelectedText";
 
 /**
  * Request payload coming from the UI layer
@@ -13,6 +13,7 @@ export interface ChatRequest {
     provider: AIProvider;
     model: string;
     userText: string;
+    itemID: number; // Added to extract PDF text
 }
 
 /**
@@ -35,6 +36,8 @@ export function getAvailableModels(): ModelCatalog {
  * Main chat handler used by the UI.
  *
  * Flow:
+ * - Check if this is a new session
+ * - If new: Extract full PDF text and send with custom system prompt
  * - Ensure session has a system prompt
  * - Optionally add selected PDF text as extra context
  * - Append user message to session history
@@ -42,33 +45,79 @@ export function getAvailableModels(): ModelCatalog {
  * - Append assistant reply
  */
 export async function handleChatSend(req: ChatRequest): Promise<ChatResult> {
-    const { sessionId, provider, model, userText } = req;
+    const { sessionId, provider, model, userText, itemID } = req;
 
     const keys = getDevKeys();
     const apiKey = provider === "openai" ? keys.openai : keys.openrouter;
 
-    // Initialize with sys system prompt exactly once per session
-    const session = getSession(sessionId);
+    // Check if this is the first message in the session
+    const isFirstMessage = await isNewSession(sessionId, ztoolkit);
+
+    // Initialize with system prompt exactly once per session
+    const session = await getSession(sessionId, ztoolkit);
     if (session.length === 0) {
-        appendMessage(sessionId, { role: "system", content: DEFAULT_SYSTEM_PROMPT});
+        await appendMessage(sessionId, { role: "system", content: DEFAULT_SYSTEM_PROMPT}, ztoolkit);
     }
 
-    // Optional context from PDF selection
-    const selected = await getSelectedPdfText();
-    const finalUserContent = selected
-        ? `Selected PDF text:\n${selected}\n\nUser questions:\n${userText}`
-        : userText;
+    await appendMessage(sessionId, { role: "user", content: userText }, ztoolkit);
 
-    appendMessage(sessionId, { role: "user", content: finalUserContent });
+    /*ztoolkit.log(isFirstMessage)
+    ztoolkit.log(itemID)*/
+
+    // If this is the first message, extract and prepend the full PDF text as context
+    if (isFirstMessage && itemID) {
+        const fullPdfText = await getFullPdfText(itemID, ztoolkit);
+
+        ztoolkit.log("Full PDF text extracted:", fullPdfText);
+
+        if (fullPdfText) {
+            // Add PDF context as a separate "context" message
+            // This happens AFTER user message, but will be sent to API in correct order
+            await appendMessage(sessionId, {
+                role: "context",
+                content: `You are a Zotero LLM Instance, please read the following as your context for this session and afterwards help the user find answers to what they ask you. You cannot see images if they ask for it.\n\nPDF-contents:\n${fullPdfText}`
+            }, ztoolkit);
+        } else {
+            // If we couldn't extract PDF text, check for selected text
+            const selected = await getSelectedPdfText();
+            if (selected) {
+                // Add selected text as context
+                await appendMessage(sessionId, {
+                    role: "context",
+                    content: `Selected PDF text:\n${selected}`
+                }, ztoolkit);
+            }
+        }
+    } else {
+        // Not the first message - check for selected text
+        const selected = await getSelectedPdfText();
+        if (selected) {
+            // Add selected text as context for this specific question
+            await appendMessage(sessionId, {
+                role: "context",
+                content: `Selected PDF text:\n${selected}`
+            }, ztoolkit);
+        }
+    }
+
+    // Get the full session for API call (including context messages)
+    const fullSession = await getSession(sessionId, ztoolkit);
 
     const assistantText = await sendChatCompletions({
         provider,
         apiKey,
         model,
-        messages: getSession(sessionId) as ChatMessage[],
+        messages: fullSession as ChatMessage[],
     });
 
-    appendMessage(sessionId, { role: "assistant", content: assistantText });
+    // Sanitize assistant response before saving
+    // Remove control characters that could cause XML/HTML parsing errors
+    const sanitizedResponse = assistantText
+        .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, '')  // Remove control chars
+        .replace(/[\uD800-\uDFFF]/g, '')  // Remove invalid surrogate pairs
+        .replace(/[\uFFFE\uFFFF]/g, '');  // Remove invalid Unicode
 
-    return { assistantText };
+    await appendMessage(sessionId, { role: "assistant", content: sanitizedResponse }, ztoolkit);
+
+    return { assistantText: sanitizedResponse };
 }

@@ -26,8 +26,9 @@ import type { AIProvider } from "../ai/modelCatalog";
 /**
  * Allowed chat roles for Chat Completions.
  * Matches OpenAI / OpenRouter specification.
+ * Note: "context" is a custom role for PDF context that gets converted to "user" before sending to API
  */
-export type ChatRole = "system" | "user" | "assistant";
+export type ChatRole = "system" | "user" | "assistant" | "context";
 
 
 /**
@@ -126,12 +127,19 @@ export async function sendChatCompletions(
     const baseUrl = getBaseUrl(provider);
     const url = `${baseUrl}/chat/completions`;
 
+    // Convert "context" role to "user" for API compatibility
+    // The API only understands system/user/assistant
+    const apiMessages = messages.map(msg => ({
+        role: msg.role === "context" ? "user" : msg.role,
+        content: msg.content
+    }));
+
     const response = await fetch(url, {
         method: "POST",
         headers: buildHeaders(provider, apiKey),
         body: JSON.stringify({
             model,
-            messages,
+            messages: apiMessages,
             temperature,
         }),
     });

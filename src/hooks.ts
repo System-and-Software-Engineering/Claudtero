@@ -14,6 +14,7 @@ import { ContextMenu } from "./modules/contextMenu";
 import { getString, initLocale } from "./utils/locale";
 import { registerPrefs, registerPrefsScripts } from "./modules/preferences";
 import { createZToolkit } from "./utils/ztoolkit";
+import { initSessionStore, cleanupOldSessions } from "./modules/chat/sessionStore";
 
 async function onStartup() {
   await Promise.all([
@@ -25,6 +26,12 @@ async function onStartup() {
   initLocale();
 
   registerPrefs();
+
+  // Initialize session store - load saved sessions from disk
+  await initSessionStore(ztoolkit);
+
+  // Clean up sessions for deleted items
+  await cleanupOldSessions(ztoolkit);
 
   //BasicExampleFactory.registerNotifier();
 
@@ -104,7 +111,11 @@ async function onMainWindowUnload(win: Window): Promise<void> {
   addon.data.dialog?.window?.close();
 }
 
-function onShutdown(): void {
+async function onShutdown(): Promise<void> {
+  // Save all sessions to disk before shutting down
+  const { cleanupOldSessions } = await import("./modules/chat/sessionStore");
+  await cleanupOldSessions(ztoolkit);
+
   ztoolkit.unregisterAll();
   addon.data.dialog?.window?.close();
   // Remove addon object

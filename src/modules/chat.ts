@@ -2,22 +2,103 @@ import { getLocaleID } from "../utils/locale";
 import { config } from "../../package.json";
 import { getAvailableModels, handleChatSend } from "./chat/chatController";
 import type { AIProvider } from "./ai/modelCatalog";
-import { it } from "node:test";
-
-
-type ChatEntry = { text: string; from: "me" | "other" };
-const chatsByItem: Record<number, ChatEntry[]> = {};
+import { getSession } from "./chat/sessionStore";
+import type { ChatMessage } from "./ai/chatClient";
 
 let paneKey = "";
 
 // Global reference to the current render function for external updates
 let currentRenderMessages: (() => void) | null = null;
 let currentItemID: number | null = null;
+let currentSessionId: string | null = null;
 let currentBody: HTMLElement | null = null;
+
+/**
+ * Sanitize text to remove invalid XML/HTML characters that could cause DOMException
+ */
+function sanitizeText(text: string): string {
+  if (!text) return '';
+
+  try {
+    // Remove control characters except newlines, tabs, and carriage returns
+    // XML 1.0 only allows: #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF]
+    let cleaned = text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, '');
+
+    // Remove invalid Unicode surrogate pairs
+    cleaned = cleaned.replace(/[\uD800-\uDFFF]/g, '');
+
+    // Remove any remaining problematic characters
+    cleaned = cleaned.replace(/[\uFFFE\uFFFF]/g, '');
+
+    return cleaned;
+  } catch (err) {
+    ztoolkit.log('[Sanitize] Error sanitizing text:', err);
+    // Fallback: return empty string if sanitization fails
+    return '';
+  }
+}
+
+/**
+ * Simple Markdown to HTML converter for chat messages
+ * Supports: **bold**, *italic*, `code`, ```code blocks```, # headings, - lists, links
+ * Uses XHTML-compliant tags for Firefox/Zotero compatibility
+ */
+function markdownToHtml(markdown: string): string {
+  // First sanitize the input to remove invalid characters
+  let html = sanitizeText(markdown);
+
+  // Escape HTML to prevent XSS
+  html = html
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+
+  // Code blocks (```code```) - must be done before inline code
+  // Use [\s\S] to match any character including newlines
+  html = html.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
+
+  // Inline code (`code`) - must not span multiple lines
+  html = html.replace(/`([^`\n]+?)`/g, '<code>$1</code>');
+
+  // Bold must be processed BEFORE italic to avoid conflicts
+  // **text** - at least one non-whitespace character, doesn't cross newlines
+  html = html.replace(/\*\*([^\n*]+?)\*\*/g, '<strong>$1</strong>');
+  // __text__
+  html = html.replace(/__([^\n_]+?)__/g, '<strong>$1</strong>');
+
+  // Italic - only match if not already part of bold (already processed)
+  // *text* - single asterisk, not at start/end of word boundary
+  html = html.replace(/\b\*([^\n*]+?)\*\b/g, '<em>$1</em>');
+  // Also match italic at start/end of string or after whitespace
+  html = html.replace(/(^|\s)\*([^\n*]+?)\*(\s|$)/g, '$1<em>$2</em>$3');
+
+  // _text_ - single underscore
+  html = html.replace(/\b_([^\n_]+?)_\b/g, '<em>$1</em>');
+  html = html.replace(/(^|\s)_([^\n_]+?)_(\s|$)/g, '$1<em>$2</em>$3');
+
+  // Headings (# H1, ## H2, ### H3, etc.) - must be at start of line
+  html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+  html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+  html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+
+  // Lists (- item or * item) - must be at start of line
+  html = html.replace(/^[\-\*] (.+)$/gm, '<li>$1</li>');
+  // Wrap consecutive <li> in <ul>
+  html = html.replace(/(<li>.*?<\/li>\s*)+/g, '<ul>$&</ul>');
+
+  // Links [text](url)
+  html = html.replace(/\[([^\]]+)\]\(([^\)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+
+  // Line breaks - use XHTML self-closing tag
+  html = html.replace(/\n/g, '<br />');
+
+  return html;
+}
 
 /**
  * Send a message to the sidebar chat from external sources (e.g., context menu, popup).
  * Opens the sidebar if not already open and scrolls to the chat pane.
+ * Note: This function is deprecated and should be updated to use sessions
  */
 export function sendToSidebarChat(text: string, itemID?: number) {
   const mainWin = Zotero.getMainWindow();
@@ -33,23 +114,8 @@ export function sendToSidebarChat(text: string, itemID?: number) {
     return;
   }
 
-  // Ensure chat history exists for this item
-  if (!chatsByItem[targetItemID]) {
-    chatsByItem[targetItemID] = [];
-  }
-
-  // Add the message
-  chatsByItem[targetItemID].push({ text, from: "me" });
-  // Echo back as if from other party (for now, until AI integration)
-  chatsByItem[targetItemID].push({ text, from: "other" });
-
   // Open sidebar and scroll to chat pane
-  openSidebarAndShowChat(mainWin, targetItemID);
-
-  // If we have a render function and it's for the same item, update the UI
-  if (currentRenderMessages && currentItemID === targetItemID) {
-    currentRenderMessages();
-  }
+  openSidebarAndShowChat(mainWin, targetItemID, text);
 }
 
 /**
@@ -251,12 +317,35 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
   }
 
   const itemID = item.id as number;
-  if (!chatsByItem[itemID]) {
-    chatsByItem[itemID] = [];
+
+  // Generate sessionId based on PDF filename (same logic as in send handler)
+  let sessionId = String(itemID); // Fallback to itemID
+  try {
+    let pdfItem = item;
+    if (item.isRegularItem()) {
+      const attachments = Zotero.Items.get(item.getAttachments());
+      const pdfAttachment = attachments.find(
+        (att: any) => att.attachmentContentType === "application/pdf"
+      );
+      if (pdfAttachment) {
+        pdfItem = pdfAttachment;
+      }
+    }
+
+    if (pdfItem.isAttachment()) {
+      const filename = pdfItem.attachmentFilename;
+      if (filename) {
+        sessionId = `pdf:${filename}`;
+        ztoolkit.log(`[Chat UI] Using PDF filename as session key: ${sessionId}`);
+      }
+    }
+  } catch (err) {
+    ztoolkit.log("[Chat UI] Error getting PDF filename, using itemID:", err);
   }
 
   // Store references for external access
   currentItemID = itemID;
+  currentSessionId = sessionId;
   currentBody = body;
 
   const container = doc.createElement("div");
@@ -283,23 +372,62 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
     { passive: false },
   );
 
-  const renderMessages = () => {
+  const renderMessages = async () => {
     messagesBox.textContent = "";
-    if (!chatsByItem[itemID].length) {
+
+    if (!currentSessionId) {
       const empty = doc.createElement("div");
       empty.className = "chat-pane__empty";
       empty.textContent = "No messages yet.";
       messagesBox.appendChild(empty);
       return;
     }
-    for (const msg of chatsByItem[itemID]) {
-      const p = doc.createElement("div");
-      p.textContent = msg.text;
-      p.className = `chat-pane__message chat-pane__message--${msg.from}`;
-      p.style.whiteSpace = "pre-wrap"; // Preserve line breaks and wrap text
-      messagesBox.appendChild(p);
+
+    try {
+      // Load session from store
+      const session = await getSession(currentSessionId, ztoolkit);
+
+      // Filter out system and context messages for display
+      // Only show user and assistant messages
+      const displayMessages = session.filter(msg => msg.role === 'user' || msg.role === 'assistant');
+
+      if (displayMessages.length === 0) {
+        const empty = doc.createElement("div");
+        empty.className = "chat-pane__empty";
+        empty.textContent = "No messages yet.";
+        messagesBox.appendChild(empty);
+        return;
+      }
+
+      for (const msg of displayMessages) {
+        const p = doc.createElement("div");
+
+        try {
+          // Use innerHTML with markdown rendering instead of textContent
+          const sanitized = sanitizeText(msg.content);
+          const html = markdownToHtml(sanitized);
+          p.innerHTML = html;
+        } catch (err) {
+          ztoolkit.log("[Chat UI] Error rendering message with innerHTML:", err);
+          // Fallback to plain text if markdown rendering fails
+          p.textContent = msg.content;
+        }
+
+        // Map role to UI class: user -> me, assistant -> other
+        const from = msg.role === 'user' ? 'me' : 'other';
+        p.className = `chat-pane__message chat-pane__message--${from}`;
+        p.style.whiteSpace = "pre-wrap"; // Preserve line breaks and wrap text
+        messagesBox.appendChild(p);
+      }
+
+      messagesBox.scrollTop = messagesBox.scrollHeight;
+    } catch (err) {
+      ztoolkit.log("Error rendering messages:", err);
+      const errorDiv = doc.createElement("div");
+      errorDiv.className = "chat-pane__empty";
+      errorDiv.textContent = "Error loading messages.";
+      messagesBox.appendChild(errorDiv);
     }
-    messagesBox.scrollTop = messagesBox.scrollHeight;
   };
 
   // Store render function for external updates
@@ -400,38 +528,134 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
     const provider = providerSelect.value as AIProvider;
     const model = modelSelect.value;
 
-    // Show user's message immediately
-    chatsByItem[itemID].push({ text, from: "me" });
+    // Clear input immediately
     input.value = "";
-    renderMessages();
     updateSendState();
 
     // Disable UI during request
     sendButton.disabled = true;
     input.disabled = true;
 
-    // Add a place holder bubble while waiting
-    const thinking: ChatEntry = { text: "...", from: "other" };
-    chatsByItem[itemID].push(thinking);
-    renderMessages();
-
     try {
-      // Use itemID as a simple per-item session key
-      const sessionId = String(itemID);
+      // Use PDF filename as session key for stability across restarts
+      // This ensures the session persists even if itemID changes
+      const item = Zotero.Items.get(itemID);
+      let sessionId = currentSessionId || String(itemID); // Use stored sessionId or fallback
 
-      const result = await handleChatSend({
+      if (item) {
+        try {
+          // Get the PDF attachment item
+          let pdfItem = item;
+          if (item.isRegularItem()) {
+            const attachments = Zotero.Items.get(item.getAttachments());
+            const pdfAttachment = attachments.find(
+              (att: any) => att.attachmentContentType === "application/pdf"
+            );
+            if (pdfAttachment) {
+              pdfItem = pdfAttachment;
+            }
+          }
+
+          // Get the filename from the attachment
+          if (pdfItem.isAttachment()) {
+            const filename = pdfItem.attachmentFilename;
+            if (filename) {
+              // Use filename as session key (more stable than itemID)
+              sessionId = `pdf:${filename}`;
+              ztoolkit.log(`Using PDF filename as session key: ${sessionId}`);
+            }
+          }
+        } catch (err) {
+          ztoolkit.log("Error getting PDF filename, using itemID:", err);
+        }
+      }
+
+      // Check if this is the first message BEFORE calling handleChatSend
+      // This way we check before user message is added to session
+      const session = await getSession(sessionId, ztoolkit);
+      const isFirstMessage = session.length === 0 || (session.length === 1 && session[0].role === 'system');
+
+      // Add loading indicator
+      const loadingDiv = doc.createElement("div");
+      loadingDiv.className = "chat-pane__message chat-pane__message--loading";
+
+      const spinner = doc.createElement("div");
+      spinner.className = "chat-pane__loading-spinner";
+
+      const loadingText = doc.createElement("span");
+      loadingText.className = "chat-pane__loading-text";
+
+      // Show "Extracting PDF..." if it's the first message
+      loadingText.textContent = isFirstMessage ? "Extracting PDF..." : "Thinking...";
+
+      loadingDiv.appendChild(spinner);
+      loadingDiv.appendChild(loadingText);
+
+      // Call handleChatSend which will append user message and context
+      // User message is added FIRST, so we can render it immediately
+      const sendPromise = handleChatSend({
         sessionId,
         provider,
         model,
         userText: text,
+        itemID: itemID, // Pass itemID for PDF text extraction
       });
 
-      thinking.text = result.assistantText;
-      renderMessages();
+      // Render immediately to show user's message
+      // Small delay to ensure the message is saved to session
+      await new Promise(resolve => setTimeout(resolve, 10));
+      if (currentRenderMessages) {
+        await currentRenderMessages();
+      }
+
+      // Add loading indicator after user message is shown
+      messagesBox.appendChild(loadingDiv);
+      messagesBox.scrollTop = messagesBox.scrollHeight;
+
+      // If it's the first message, we need to wait for PDF extraction before changing text
+      if (isFirstMessage) {
+        // Create a promise that resolves when context message is added
+        // We'll poll the session to detect when context is added
+        const waitForExtraction = async () => {
+          const startTime = Date.now();
+          const maxWaitTime = 60000 * 10; // 30 seconds max
+
+          while (Date.now() - startTime < maxWaitTime) {
+            await new Promise(resolve => setTimeout(resolve, 500)); // Check every 500ms
+
+            const currentSession = await getSession(sessionId, ztoolkit);
+            // Check if context message has been added (it comes after system and user)
+            const hasContext = currentSession.some(msg => msg.role === 'context');
+
+            if (hasContext && loadingDiv.isConnected) {
+              loadingText.textContent = "Thinking...";
+              break;
+            }
+          }
+        };
+
+        // Start polling in background
+        waitForExtraction();
+      }
+
+      // Now wait for the AI response (including PDF extraction on first message)
+      const result = await sendPromise;
+
+      // Remove loading indicator
+      loadingDiv.remove();
+
+      // Update UI with the assistant's response
+      if (currentRenderMessages) {
+        await currentRenderMessages();
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      thinking.text = `Error; ${msg}`;
-      renderMessages();
+      ztoolkit.log("Error sending message:", msg);
+
+      // Show error in UI
+      if (currentRenderMessages) {
+        await currentRenderMessages();
+      }
     } finally {
       input.disabled = false;
       sendButton.disabled = !input.value.trim();

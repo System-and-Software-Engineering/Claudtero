@@ -28,7 +28,7 @@ class Addon {
     this.data = {
       alive: true,
       config,
-      env: __env__,
+      env: __env__ as "development" | "production",
       initialized: false,
       ztoolkit: createZToolkit(),
     };
