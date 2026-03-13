@@ -14,6 +14,7 @@ import { ContextMenu } from "./modules/contextMenu";
 import { getString, initLocale } from "./utils/locale";
 import { registerPrefs, registerPrefsScripts } from "./modules/preferences";
 import { createZToolkit } from "./utils/ztoolkit";
+import { extractOpenPdfText } from "./modules/pdf/getPdfText";
 
 async function onStartup() {
   await Promise.all([
@@ -26,7 +27,7 @@ async function onStartup() {
 
   registerPrefs();
 
-  //BasicExampleFactory.registerNotifier();
+  BasicExampleFactory.registerNotifier();
 
   //KeyExampleFactory.registerShortcuts();
 
@@ -130,7 +131,11 @@ async function onNotify(
     type == "tab" &&
     extraData[ids[0]].type == "reader"
   ) {
-    BasicExampleFactory.exampleNotifierCallback();
+    const openPdfText = await extractOpenPdfText(ztoolkit);
+    ztoolkit.log(
+      "Open PDF text preview:",
+      openPdfText ? openPdfText.slice(0, 200) : "",
+    );
   } else {
     return;
   }
