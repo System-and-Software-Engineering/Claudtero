@@ -182,6 +182,12 @@
   color: #1f2430;
 }
 
+.chat-pane__message--thinking {
+  background: #f0f1f4;
+  color: #6b7280;
+  font-style: italic;
+}
+
 .chat-pane__empty {
   text-align: center;
   color: #6b7280;
@@ -408,6 +414,10 @@
   .chat-pane__message--other {
     background: #161b24;
     color: #e8ecf5;
+  }
+  .chat-pane__message--thinking {
+    background: #232936;
+    color: #9aa5b5;
   }
   .chat-pane__md-blockquote {
     border-left-color: #4b5563;

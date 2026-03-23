@@ -11,6 +11,7 @@ type ChatEntry = {
   text: string;
   from: "me" | "other";
   selectedText?: string;
+  isThinking?: boolean;
 };
 type PendingHighlightedSelection = { text: string; pageNumber: number | null };
 const chatsByItem: Record<number, ChatEntry[]> = {};
@@ -46,6 +47,9 @@ function buildMessageNode(doc: Document, msg: ChatEntry): HTMLElement {
 
   const message = doc.createElement("div");
   message.className = `chat-pane__message chat-pane__message--${msg.from}`;
+  if (msg.isThinking) {
+    message.classList.add("chat-pane__message--thinking");
+  }
   renderMarkdown(message, doc, msg.text);
   messageGroup.appendChild(message);
 
@@ -535,7 +539,34 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
     const provider = providerSelect.value as AIProvider;
     const model = modelSelect.value;
     const pendingSelection = getPendingHighlightedSelectionForItem(itemID);
+    const selectedText = pendingSelection?.text?.trim() || undefined;
     let preparedRequest: Awaited<ReturnType<typeof prepareChatRequest>> | null = null;
+
+    chatsByItem[itemID].push({
+      text,
+      from: "me",
+      selectedText,
+    });
+
+    const thinking: ChatEntry = {
+      text: "Thinking..",
+      from: "other",
+      isThinking: true,
+    };
+    chatsByItem[itemID].push(thinking);
+
+    if (pendingSelection) {
+      clearPendingHighlightedSelectionForItem(itemID);
+      renderHighlightedSelection();
+    }
+
+    input.value = "";
+    renderMessages();
+    updateSendState();
+
+    // Disable UI immediately so the send feels synchronous from the user's side.
+    sendButton.disabled = true;
+    input.disabled = true;
 
     try {
       preparedRequest = await prepareChatRequest({
@@ -567,29 +598,6 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
       }
     }
 
-    // Show user's message immediately
-    chatsByItem[itemID].push({
-      text,
-      from: "me",
-      selectedText: pendingSelection?.text?.trim() || undefined,
-    });
-    if (pendingSelection) {
-      clearPendingHighlightedSelectionForItem(itemID);
-      renderHighlightedSelection();
-    }
-    input.value = "";
-    renderMessages();
-    updateSendState();
-
-    // Disable UI during request
-    sendButton.disabled = true;
-    input.disabled = true;
-
-    // Add a place holder bubble while waiting
-    const thinking: ChatEntry = { text: "...", from: "other" };
-    chatsByItem[itemID].push(thinking);
-    renderMessages();
-
     try {
       // Use itemID as a simple per-item session key
       const sessionId = String(itemID);
@@ -603,11 +611,19 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
         selectedPageNumber: pendingSelection?.pageNumber ?? null,
       }, preparedRequest ?? undefined);
 
-      thinking.text = result.assistantText;
+      const thinkingIndex = chatsByItem[itemID].indexOf(thinking);
+      if (thinkingIndex >= 0) {
+        chatsByItem[itemID].splice(thinkingIndex, 1);
+      }
+      chatsByItem[itemID].push({ text: result.assistantText, from: "other" });
       renderMessages();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      thinking.text = `Error; ${msg}`;
+      const thinkingIndex = chatsByItem[itemID].indexOf(thinking);
+      if (thinkingIndex >= 0) {
+        chatsByItem[itemID].splice(thinkingIndex, 1);
+      }
+      chatsByItem[itemID].push({ text: `Error; ${msg}`, from: "other" });
       renderMessages();
     } finally {
       input.disabled = false;
