@@ -1,5 +1,6 @@
 import { ZoteroToolkit } from "zotero-plugin-toolkit";
 import { config } from "../../package.json";
+import { env } from "../config/env";
 
 export { createZToolkit };
 
@@ -15,15 +16,14 @@ function createZToolkit() {
 }
 
 function initZToolkit(_ztoolkit: ReturnType<typeof createZToolkit>) {
-  const env = __env__;
   _ztoolkit.basicOptions.log.prefix = `[${config.addonName}]`;
-  _ztoolkit.basicOptions.log.disableConsole = env === "production";
-  _ztoolkit.UI.basicOptions.ui.enableElementJSONLog = __env__ === "development";
-  _ztoolkit.UI.basicOptions.ui.enableElementDOMLog = __env__ === "development";
+  _ztoolkit.basicOptions.log.disableConsole = env.isProd;
+  _ztoolkit.UI.basicOptions.ui.enableElementJSONLog = env.isDev;
+  _ztoolkit.UI.basicOptions.ui.enableElementDOMLog = env.isDev;
   // Getting basicOptions.debug will load global modules like the debug bridge.
   // since we want to deprecate it, should avoid using it unless necessary.
   // _ztoolkit.basicOptions.debug.disableDebugBridgePassword =
-  //   __env__ === "development";
+  //   env.isDev;
   _ztoolkit.basicOptions.api.pluginID = config.addonID;
   _ztoolkit.ProgressWindow.setIconURI(
     "default",

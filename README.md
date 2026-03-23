@@ -223,6 +223,22 @@ Tired of endless restarting? Forget about it!
 
 When file changes are detected in `src` or `addon`, the plugin will be automatically compiled and reloaded.
 
+#### Dev And Prod Modes
+
+This project uses a single codebase with two explicit app environments:
+
+- `dev`: enables development-only behavior and builds into `.scaffold/build/dev`
+- `prod`: enables production behavior and builds into `.scaffold/build/prod`
+
+Use these commands:
+
+- `npm start` or `npm run start:dev`: run the plugin in development mode
+- `npm run build:dev`: build a development artifact
+- `npm run build` or `npm run build:prod`: build a production artifact
+- `npm run release`: release using the production environment
+
+Environment-dependent behavior should go through `src/config/env.ts` instead of checking `__env__` directly throughout the codebase.
+
 <details style="text-indent: 2em">
 <summary>💡 Steps to add this feature to an existing plugin</summary>
 
@@ -242,6 +258,8 @@ You can also:
 ### 4 Build
 
 Run `npm run build` to build the plugin in production mode. The build output will be located in the `.scaffold/build/` directory.
+
+Production builds are written to `.scaffold/build/prod/`. Development builds are written to `.scaffold/build/dev/`.
 
 For detailed build steps, refer to the [zotero-plugin-scaffold documentation](https://northword.github.io/zotero-plugin-scaffold/build.html). In short, the process can be divided into the following steps:
 

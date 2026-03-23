@@ -1,6 +1,7 @@
 import { config } from "../package.json";
 import { ColumnOptions, DialogHelper } from "zotero-plugin-toolkit";
 import hooks from "./hooks";
+import { appEnv, runtimeEnv, type AppEnv, type RuntimeEnv } from "./config/env";
 import { createZToolkit } from "./utils/ztoolkit";
 
 class Addon {
@@ -8,7 +9,8 @@ class Addon {
     alive: boolean;
     config: typeof config;
     // Env type, see build.js
-    env: "development" | "production";
+    env: RuntimeEnv;
+    appEnv: AppEnv;
     initialized?: boolean;
     ztoolkit: ZToolkit;
     locale?: {
@@ -28,7 +30,8 @@ class Addon {
     this.data = {
       alive: true,
       config,
-      env: __env__ as "development" | "production",
+      env: runtimeEnv,
+      appEnv,
       initialized: false,
       ztoolkit: createZToolkit(),
     };

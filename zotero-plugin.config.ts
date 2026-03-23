@@ -2,10 +2,16 @@ import "dotenv/config";
 import { defineConfig } from "zotero-plugin-scaffold";
 import pkg from "./package.json";
 
+const appEnv = process.env.APP_ENV === "dev" ? "dev" : "prod";
+const runtimeEnv = appEnv === "dev" ? "development" : "production";
+const dist = `.scaffold/build/${appEnv}`;
+const addonName =
+  appEnv === "dev" ? `${pkg.config.addonName} (Dev)` : pkg.config.addonName;
+
 export default defineConfig({
   source: ["src", "addon"],
-  dist: ".scaffold/build",
-  name: pkg.config.addonName,
+  dist,
+  name: addonName,
   id: pkg.config.addonID,
   namespace: pkg.config.addonRef,
   updateURL: `https://github.com/{{owner}}/{{repo}}/releases/download/release/${
@@ -18,6 +24,7 @@ export default defineConfig({
     assets: ["addon/**/*.*"],
     define: {
       ...pkg.config,
+      addonName,
       author: pkg.author,
       description: pkg.description,
       homepage: pkg.homepage,
@@ -31,7 +38,8 @@ export default defineConfig({
       {
         entryPoints: ["src/index.ts"],
         define: {
-          __env__: `"${process.env.NODE_ENV}"`,
+          __env__: JSON.stringify(runtimeEnv),
+          __appEnv__: JSON.stringify(appEnv),
 
           // Inject dev keys
           // TODO: Remove later
@@ -40,7 +48,7 @@ export default defineConfig({
         },
         bundle: true,
         target: "firefox115",
-        outfile: `.scaffold/build/addon/content/scripts/${pkg.config.addonRef}.js`,
+        outfile: `${dist}/addon/content/scripts/${pkg.config.addonRef}.js`,
       },
     ],
   },
