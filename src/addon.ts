@@ -1,30 +1,37 @@
 import { config } from "../package.json";
-import { ColumnOptions, DialogHelper } from "zotero-plugin-toolkit";
+import { DialogHelper } from "zotero-plugin-toolkit";
 import hooks from "./hooks";
 import { appEnv, runtimeEnv, type AppEnv, type RuntimeEnv } from "./config/env";
 import { createZToolkit } from "./utils/ztoolkit";
 
-class Addon {
-  public data: {
-    alive: boolean;
-    config: typeof config;
-    // Env type, see build.js
-    env: RuntimeEnv;
-    appEnv: AppEnv;
-    initialized?: boolean;
-    ztoolkit: ZToolkit;
-    locale?: {
-      current: any;
-    };
-    prefs?: {
-      window: Window;
-    };
-    dialog?: DialogHelper;
+interface LocaleState {
+  current: {
+    formatMessagesSync?(
+      messages: Array<{ id: string; args?: Record<string, unknown> }>,
+    ): Array<{ value?: string; attributes?: Array<{ name: string; value: string }> | Record<string, string> }>;
   };
-  // Lifecycle hooks
+}
+
+interface PreferencesState {
+  window: Window;
+}
+
+interface AddonData {
+  alive: boolean;
+  config: typeof config;
+  env: RuntimeEnv;
+  appEnv: AppEnv;
+  initialized: boolean;
+  ztoolkit: ZToolkit;
+  locale?: LocaleState;
+  prefs?: PreferencesState;
+  dialog?: DialogHelper;
+}
+
+class Addon {
+  public data: AddonData;
   public hooks: typeof hooks;
-  // APIs
-  public api: object;
+  public api: Record<string, unknown>;
 
   constructor() {
     this.data = {

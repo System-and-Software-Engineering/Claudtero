@@ -1,16 +1,20 @@
 import { getDevKeys } from "../ai/keys";
 import { sendChatCompletions, type ChatMessage } from "../ai/chatClient";
-import { getModelCatalog, type AIProvider, type ModelCatalog } from "../ai/modelCatalog";
-import { appendMessage, getSession } from "./sessionStore";
-import { DEFAULT_SYSTEM_PROMPT } from "./systemPrompt";
+import {
+    getModelCatalog,
+    type AIProvider,
+    type ModelCatalog,
+} from "../ai/modelCatalog";
 import { getSelectedPdfText } from "../pdf/getSelectedText";
 import { getPref } from "../../utils/prefs";
+import { appendMessage, getSession } from "./sessionStore";
+import { DEFAULT_SYSTEM_PROMPT } from "./systemPrompt";
 import {
-    buildSinglePageContext,
     buildDocumentContext,
+    buildSinglePageContext,
     buildUserMessageWithContext,
-    type ContextModeDecision,
     decideContextMode,
+    type ContextModeDecision,
 } from "./documentContext";
 
 /**
@@ -49,21 +53,73 @@ function parseTemperature(value: unknown, fallback = 0.2): number {
     return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function getTrimmedPref(
+    key:
+        | "openaiApiKey"
+        | "openaiModel"
+        | "openaiPrompt"
+        | "goetheApiKey"
+        | "goetheModel"
+        | "goethePrompt",
+): string {
+    return String(getPref(key) ?? "").trim();
+}
+
+function resolveSelectedPageNumber(pageNumber: number | null | undefined): number | null {
+    return typeof pageNumber === "number" && pageNumber > 0 ? pageNumber : null;
+}
+
+function buildSelectionDecision(): ContextModeDecision {
+    return {
+        mode: "page_window",
+        reason:
+            "The user provided highlighted text, so only the source page was sent as context.",
+        keywords: [],
+    };
+}
+
+function applyBuiltContextDecision(
+    decision: ContextModeDecision,
+    appliedMode: ContextModeDecision["mode"] | null,
+    fallbackReason?: string,
+): ContextModeDecision {
+    if (!appliedMode || appliedMode === decision.mode) {
+        return decision;
+    }
+
+    return {
+        ...decision,
+        mode: appliedMode,
+        reason: fallbackReason ?? decision.reason,
+    };
+}
+
+function ensureSessionSystemPrompt(sessionId: string, systemPrompt: string) {
+    if (getSession(sessionId).length === 0) {
+        appendMessage(sessionId, {
+            role: "system",
+            content: systemPrompt,
+        });
+    }
+}
+
+function buildRequestMessages(sessionId: string, userContent: string): ChatMessage[] {
+    return [...getSession(sessionId), { role: "user", content: userContent }];
+}
+
 function resolveProviderSettings(
     provider: AIProvider,
     requestedModel: string,
 ): ResolvedProviderSettings {
     const keys = getDevKeys();
+    const requestedModelId = requestedModel.trim();
 
     switch (provider) {
         case "openai": {
-            const configuredPrompt = String(getPref("openaiPrompt") ?? "").trim();
+            const configuredPrompt = getTrimmedPref("openaiPrompt");
             return {
-                apiKey: String(getPref("openaiApiKey") ?? "").trim() || keys.openai,
-                model:
-                    requestedModel.trim() ||
-                    String(getPref("openaiModel") ?? "").trim() ||
-                    "gpt-4o",
+                apiKey: getTrimmedPref("openaiApiKey") || keys.openai,
+                model: requestedModelId || getTrimmedPref("openaiModel") || "gpt-4o",
                 temperature: parseTemperature(getPref("openaiTemp"), 0.2),
                 systemPrompt: configuredPrompt || DEFAULT_SYSTEM_PROMPT,
             };
@@ -71,15 +127,15 @@ function resolveProviderSettings(
         case "openrouter":
             return {
                 apiKey: keys.openrouter,
-                model: requestedModel.trim() || "anthropic/claude-3.5-sonnet",
+                model: requestedModelId || "anthropic/claude-3.5-sonnet",
                 temperature: 0.2,
                 systemPrompt: DEFAULT_SYSTEM_PROMPT,
             };
         case "goethe": {
-            const configuredPrompt = String(getPref("goethePrompt") ?? "").trim();
+            const configuredPrompt = getTrimmedPref("goethePrompt");
             return {
-                apiKey: String(getPref("goetheApiKey") ?? "").trim(),
-                model: requestedModel.trim() || String(getPref("goetheModel") ?? "").trim(),
+                apiKey: getTrimmedPref("goetheApiKey"),
+                model: requestedModelId || getTrimmedPref("goetheModel"),
                 temperature: parseTemperature(getPref("goetheTemp"), 0.2),
                 systemPrompt: configuredPrompt || DEFAULT_SYSTEM_PROMPT,
             };
@@ -103,31 +159,23 @@ export async function prepareChatRequest(
 ): Promise<PreparedChatRequest> {
     const { provider, model, userText } = req;
     const settings = resolveProviderSettings(provider, model);
-    const selected = (req.selectedText ?? (await getSelectedPdfText())).trim();
+    const selectedText = (req.selectedText ?? (await getSelectedPdfText())).trim();
 
-    if (selected) {
-        const selectedPageNumber =
-            typeof req.selectedPageNumber === "number" && req.selectedPageNumber > 0
-                ? req.selectedPageNumber
-                : null;
-        const decision: ContextModeDecision = {
-            mode: "page_window",
-            reason:
-                "The user provided highlighted text, so only the source page was sent as context.",
-            keywords: [],
-        };
+    if (selectedText) {
+        const selectedPageNumber = resolveSelectedPageNumber(req.selectedPageNumber);
+        const decision = buildSelectionDecision();
         const documentContext = selectedPageNumber
             ? await buildSinglePageContext({
-                  ztoolkit,
-                  pageNumber: selectedPageNumber,
-              })
+                    ztoolkit,
+                    pageNumber: selectedPageNumber,
+                })
             : "";
 
         return {
             settings,
             finalUserContent: buildUserMessageWithContext({
                 userText,
-                selectedText: selected,
+                selectedText,
                 decision,
                 documentContext,
             }),
@@ -145,21 +193,17 @@ export async function prepareChatRequest(
         decision,
         userText,
     });
-    const effectiveDecision: ContextModeDecision =
-        builtContext.appliedMode && builtContext.appliedMode !== decision.mode
-            ? {
-                  ...decision,
-                  mode: builtContext.appliedMode,
-                  reason: builtContext.fallbackReason ?? decision.reason,
-              }
-            : decision;
 
     return {
         settings,
         finalUserContent: buildUserMessageWithContext({
             userText,
-            selectedText: selected,
-            decision: effectiveDecision,
+            selectedText,
+            decision: applyBuiltContextDecision(
+                decision,
+                builtContext.appliedMode,
+                builtContext.fallbackReason,
+            ),
             documentContext: builtContext.context,
         }),
     };
@@ -177,41 +221,29 @@ export async function prepareChatRequest(
  * - Append assistant reply
  */
 export async function handleChatSend(req: ChatRequest): Promise<ChatResult> {
-    return handlePreparedChatSend(req);
+  return handlePreparedChatSend(req);
 }
 
 export async function handlePreparedChatSend(
-    req: ChatRequest,
-    preparedRequest?: PreparedChatRequest,
+  req: ChatRequest,
+  preparedRequest?: PreparedChatRequest,
 ): Promise<ChatResult> {
-    const { sessionId, provider, userText } = req;
-    const resolvedRequest = preparedRequest ?? (await prepareChatRequest(req));
-    const { settings, finalUserContent } = resolvedRequest;
+  const { sessionId, provider, userText } = req;
+  const resolvedRequest = preparedRequest ?? (await prepareChatRequest(req));
+  const { settings, finalUserContent } = resolvedRequest;
 
-    // Initialize with sys system prompt exactly once per session
-    const session = getSession(sessionId);
-    if (session.length === 0) {
-        appendMessage(sessionId, {
-            role: "system",
-            content: settings.systemPrompt,
-        });
-    }
+  ensureSessionSystemPrompt(sessionId, settings.systemPrompt);
 
-    const requestMessages = [
-        ...getSession(sessionId),
-        { role: "user", content: finalUserContent },
-    ] as ChatMessage[];
+  const assistantText = await sendChatCompletions({
+    provider,
+    apiKey: settings.apiKey,
+    model: settings.model,
+    messages: buildRequestMessages(sessionId, finalUserContent),
+    temperature: settings.temperature,
+  });
 
-    const assistantText = await sendChatCompletions({
-        provider,
-        apiKey: settings.apiKey,
-        model: settings.model,
-        messages: requestMessages,
-        temperature: settings.temperature,
-    });
+  appendMessage(sessionId, { role: "user", content: userText });
+  appendMessage(sessionId, { role: "assistant", content: assistantText });
 
-    appendMessage(sessionId, { role: "user", content: userText });
-    appendMessage(sessionId, { role: "assistant", content: assistantText });
-
-    return { assistantText };
+  return { assistantText };
 }

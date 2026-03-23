@@ -59,10 +59,13 @@ function onShutdown(): void {
  * @param type event type
  * @param data event data
  */
-async function onPrefsEvent(type: string, data: { [key: string]: any }) {
+async function onPrefsEvent(
+  type: string,
+  data: Record<string, unknown>,
+) {
   switch (type) {
     case "load":
-      registerPrefsScripts(data.window);
+      registerPrefsScripts((data as { window: Window }).window);
       break;
     default:
       return;

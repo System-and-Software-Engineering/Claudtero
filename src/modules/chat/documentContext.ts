@@ -4,8 +4,10 @@ import {
   extractOpenPdfText,
   getCurrentOpenPdfPage,
   getOpenPdfPageCount,
+  type PdfPageText,
+  type ZToolkitLike,
 } from "../pdf/getPdfText";
-import { sendChatCompletions, type ChatMessage } from "../ai/chatClient";
+import { sendChatCompletions } from "../ai/chatClient";
 import type { AIProvider } from "../ai/modelCatalog";
 
 export type ContextMode = "page_window" | "bm25_window" | "whole_document";
@@ -23,6 +25,18 @@ export interface BuiltDocumentContext {
   appliedMode: ContextMode | null;
   fallbackReason?: string;
 }
+
+interface RouterDecisionPayload {
+  mode?: unknown;
+  reason?: unknown;
+  keywords?: unknown;
+}
+
+type ContextBuilder = (options: {
+  ztoolkit: ZToolkitLike;
+  userText: string;
+  keywords: string[];
+}) => Promise<string>;
 
 const ROUTER_SYSTEM_PROMPT = `
 You decide how much PDF context an academic assistant should send to an LLM.
@@ -61,20 +75,26 @@ function normalizeWhitespace(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
-function parseJsonObject(text: string): any | null {
+function parseJsonObject(text: string): RouterDecisionPayload | null {
   const trimmed = text.trim();
   const fenceMatch = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
   const candidate = fenceMatch ? fenceMatch[1] : trimmed;
 
   try {
-    return JSON.parse(candidate);
+    const parsed = JSON.parse(candidate) as unknown;
+    return parsed && typeof parsed === "object"
+      ? (parsed as RouterDecisionPayload)
+      : null;
   } catch {
     const objectMatch = candidate.match(/\{[\s\S]*\}/);
     if (!objectMatch) {
       return null;
     }
     try {
-      return JSON.parse(objectMatch[0]);
+      const parsed = JSON.parse(objectMatch[0]) as unknown;
+      return parsed && typeof parsed === "object"
+        ? (parsed as RouterDecisionPayload)
+        : null;
     } catch {
       return null;
     }
@@ -89,6 +109,18 @@ function tokenize(text: string): string[] {
 
 function unique<T>(values: T[]): T[] {
   return [...new Set(values)];
+}
+
+function extractKeywords(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return unique(
+    value
+      .map((keyword) => String(keyword ?? "").trim())
+      .filter(Boolean),
+  ).slice(0, 8);
 }
 
 function getFallbackDecision(userText: string): ContextModeDecision {
@@ -166,33 +198,27 @@ export async function decideContextMode(options: {
     }
 
     if (isLocalPageRequest(userText)) {
+      const fallbackKeywords = getFallbackDecision(userText).keywords;
       return {
         mode: "page_window",
         reason:
           "The user explicitly asked about the current page, so local page context overrides broader routing.",
-        keywords: Array.isArray(parsed?.keywords)
-          ? (unique(
-              parsed.keywords
-                .map((keyword: unknown) => String(keyword ?? "").trim())
-                .filter((keyword: string) => Boolean(keyword)),
-            ).slice(0, 8) as string[])
-          : getFallbackDecision(userText).keywords,
+        keywords: extractKeywords(parsed?.keywords).length
+          ? extractKeywords(parsed?.keywords)
+          : fallbackKeywords,
       };
     }
+
+    const fallbackDecision = getFallbackDecision(userText);
+    const parsedKeywords = extractKeywords(parsed?.keywords);
 
     return {
       mode,
       reason:
         typeof parsed?.reason === "string" && parsed.reason.trim()
           ? parsed.reason.trim()
-          : getFallbackDecision(userText).reason,
-      keywords: Array.isArray(parsed?.keywords)
-        ? (unique(
-            parsed.keywords
-              .map((keyword: unknown) => String(keyword ?? "").trim())
-              .filter((keyword: string) => Boolean(keyword)),
-          ).slice(0, 8) as string[])
-        : getFallbackDecision(userText).keywords,
+          : fallbackDecision.reason,
+      keywords: parsedKeywords.length ? parsedKeywords : fallbackDecision.keywords,
     };
   } catch {
     return getFallbackDecision(userText);
@@ -215,7 +241,7 @@ function buildNeighborPages(centerPages: number[], pageCount: number): number[] 
 }
 
 function formatPageContexts(
-  pages: Array<{ pageNumber: number; text: string }>,
+  pages: PdfPageText[],
   header: string,
 ): string {
   const sections = pages
@@ -233,10 +259,10 @@ function formatPageContexts(
 }
 
 function chooseNearestNonEmptyPages(options: {
-  pages: Array<{ pageNumber: number; text: string }>;
+  pages: PdfPageText[];
   anchorPage: number;
   maxPages?: number;
-}): Array<{ pageNumber: number; text: string }> {
+}): PdfPageText[] {
   const { pages, anchorPage, maxPages = 3 } = options;
 
   return pages
@@ -253,14 +279,14 @@ function chooseNearestNonEmptyPages(options: {
 function splitFullTextIntoApproximatePages(
   fullText: string,
   pageCount: number,
-): Array<{ pageNumber: number; text: string }> {
+): PdfPageText[] {
   const normalized = fullText.replace(/\r\n/g, "\n").trim();
   if (!normalized || pageCount < 1) {
     return [];
   }
 
   const estimatedChunkSize = Math.max(1, Math.ceil(normalized.length / pageCount));
-  const pages: Array<{ pageNumber: number; text: string }> = [];
+  const pages: PdfPageText[] = [];
   let cursor = 0;
 
   for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
@@ -298,8 +324,8 @@ function splitFullTextIntoApproximatePages(
 }
 
 async function getApproximateDocumentPages(
-  ztoolkit: any,
-): Promise<Array<{ pageNumber: number; text: string }>> {
+  ztoolkit: ZToolkitLike,
+): Promise<PdfPageText[]> {
   const fullText = await extractOpenPdfText(ztoolkit);
   if (!fullText) {
     return [];
@@ -319,7 +345,7 @@ interface PageStats {
 }
 
 function buildPageStats(
-  pages: Array<{ pageNumber: number; text: string }>,
+  pages: PdfPageText[],
 ): PageStats[] {
   return pages.map((page) => {
     const tokens = tokenize(page.text);
@@ -340,7 +366,7 @@ function buildPageStats(
 }
 
 function computeBm25Matches(
-  pages: Array<{ pageNumber: number; text: string }>,
+  pages: PdfPageText[],
   query: string,
   keywords: string[],
 ): number[] {
@@ -405,7 +431,23 @@ function computeBm25Matches(
   return scoredPages.map((page) => page.pageNumber);
 }
 
-async function buildPageWindowContext(ztoolkit: any): Promise<string> {
+function buildPageWindowHeader(pageNumber: number, approximate = false): string {
+  return approximate
+    ? `Document context mode: page_window (approximated from whole-document extraction for current page ${pageNumber} with neighbors)`
+    : `Document context mode: page_window (current page ${pageNumber} with neighbors)`;
+}
+
+function buildBestEffortHeader(pageNumber: number): string {
+  return `Document context mode: page_window (best-effort nearest non-empty pages around ${pageNumber})`;
+}
+
+function buildSinglePageHeader(pageNumber: number, approximate = false): string {
+  return approximate
+    ? `Document context mode: page_window (approximated selected text source page ${pageNumber})`
+    : `Document context mode: page_window (selected text source page ${pageNumber})`;
+}
+
+async function buildPageWindowContext(ztoolkit: ZToolkitLike): Promise<string> {
   const currentPage = getCurrentOpenPdfPage(ztoolkit);
   const pageCount = await getOpenPdfPageCount(ztoolkit);
 
@@ -420,7 +462,7 @@ async function buildPageWindowContext(ztoolkit: any): Promise<string> {
 
     const context = formatPageContexts(
       pages,
-      `Document context mode: page_window (current page ${currentPage} with neighbors)`,
+      buildPageWindowHeader(currentPage),
     );
     if (context) {
       return context;
@@ -445,7 +487,7 @@ async function buildPageWindowContext(ztoolkit: any): Promise<string> {
     );
     const approximateContext = formatPageContexts(
       approximateSelection,
-      `Document context mode: page_window (approximated from whole-document extraction for current page ${approximateAnchorPage} with neighbors)`,
+      buildPageWindowHeader(approximateAnchorPage, true),
     );
 
     if (approximateContext) {
@@ -458,7 +500,7 @@ async function buildPageWindowContext(ztoolkit: any): Promise<string> {
     });
     return formatPageContexts(
       nearestApproximatePages,
-      `Document context mode: page_window (best-effort nearest non-empty pages around ${approximateAnchorPage})`,
+      buildBestEffortHeader(approximateAnchorPage),
     );
   }
 
@@ -469,7 +511,7 @@ async function buildPageWindowContext(ztoolkit: any): Promise<string> {
 
   const fallbackContext = formatPageContexts(
     selectedPages,
-    `Document context mode: page_window (current page ${fallbackCurrentPage} with neighbors)`,
+    buildPageWindowHeader(fallbackCurrentPage),
   );
   if (fallbackContext) {
     return fallbackContext;
@@ -481,7 +523,7 @@ async function buildPageWindowContext(ztoolkit: any): Promise<string> {
   });
   const nearestContext = formatPageContexts(
     nearestPages,
-    `Document context mode: page_window (best-effort nearest non-empty pages around ${fallbackCurrentPage})`,
+    buildBestEffortHeader(fallbackCurrentPage),
   );
   if (nearestContext) {
     return nearestContext;
@@ -504,12 +546,12 @@ async function buildPageWindowContext(ztoolkit: any): Promise<string> {
 
   return formatPageContexts(
     approximateSelection,
-    `Document context mode: page_window (approximated from whole-document extraction for current page ${approximateCurrentPage} with neighbors)`,
+    buildPageWindowHeader(approximateCurrentPage, true),
   );
 }
 
 async function buildBm25WindowContext(
-  ztoolkit: any,
+  ztoolkit: ZToolkitLike,
   query: string,
   keywords: string[],
 ): Promise<string> {
@@ -535,7 +577,7 @@ async function buildBm25WindowContext(
   );
 }
 
-async function buildWholeDocumentContext(ztoolkit: any): Promise<string> {
+async function buildWholeDocumentContext(ztoolkit: ZToolkitLike): Promise<string> {
   const fullText = await extractOpenPdfText(ztoolkit);
   if (fullText) {
     return `Document context mode: whole_document\n\n${fullText}`;
@@ -550,7 +592,7 @@ async function buildWholeDocumentContext(ztoolkit: any): Promise<string> {
 }
 
 export async function buildSinglePageContext(options: {
-  ztoolkit: any;
+  ztoolkit: ZToolkitLike;
   pageNumber: number;
 }): Promise<string> {
   const { ztoolkit, pageNumber } = options;
@@ -562,7 +604,7 @@ export async function buildSinglePageContext(options: {
   const directPageText = await extractOpenPdfPageText(ztoolkit, pageNumber);
   const directContext = formatPageContexts(
     [{ pageNumber, text: directPageText }],
-    `Document context mode: page_window (selected text source page ${pageNumber})`,
+    buildSinglePageHeader(pageNumber),
   );
   if (directContext) {
     return directContext;
@@ -573,7 +615,7 @@ export async function buildSinglePageContext(options: {
     extractedPages.find((page) => page.pageNumber === pageNumber)?.text ?? "";
   const extractedContext = formatPageContexts(
     [{ pageNumber, text: extractedPageText }],
-    `Document context mode: page_window (selected text source page ${pageNumber})`,
+    buildSinglePageHeader(pageNumber),
   );
   if (extractedContext) {
     return extractedContext;
@@ -584,32 +626,19 @@ export async function buildSinglePageContext(options: {
     approximatePages.find((page) => page.pageNumber === pageNumber)?.text ?? "";
   return formatPageContexts(
     [{ pageNumber, text: approximatePageText }],
-    `Document context mode: page_window (approximated selected text source page ${pageNumber})`,
+    buildSinglePageHeader(pageNumber, true),
   );
 }
 
-async function buildDocumentContextForMode(options: {
-  ztoolkit: any;
-  mode: ContextMode;
-  userText: string;
-  keywords: string[];
-}): Promise<string> {
-  const { ztoolkit, mode, userText, keywords } = options;
-
-  switch (mode) {
-    case "page_window":
-      return buildPageWindowContext(ztoolkit);
-    case "bm25_window":
-      return buildBm25WindowContext(ztoolkit, userText, keywords);
-    case "whole_document":
-      return buildWholeDocumentContext(ztoolkit);
-    default:
-      return "";
-  }
-}
+const CONTEXT_BUILDERS: Record<ContextMode, ContextBuilder> = {
+  page_window: async ({ ztoolkit }) => buildPageWindowContext(ztoolkit),
+  bm25_window: async ({ ztoolkit, userText, keywords }) =>
+    buildBm25WindowContext(ztoolkit, userText, keywords),
+  whole_document: async ({ ztoolkit }) => buildWholeDocumentContext(ztoolkit),
+};
 
 export async function buildDocumentContext(options: {
-  ztoolkit: any;
+  ztoolkit: ZToolkitLike;
   decision: ContextModeDecision;
   userText: string;
 }): Promise<BuiltDocumentContext> {
@@ -626,9 +655,8 @@ export async function buildDocumentContext(options: {
         ];
 
   for (const mode of fallbackOrder) {
-    const context = await buildDocumentContextForMode({
+    const context = await CONTEXT_BUILDERS[mode]({
       ztoolkit,
-      mode,
       userText,
       keywords: decision.keywords,
     });

@@ -1,9 +1,9 @@
-type ZToolkitLike = {
+export type ZToolkitLike = {
   getGlobal(name: string): unknown;
   log(...args: unknown[]): void;
 };
 
-type PdfPageText = {
+export type PdfPageText = {
   pageNumber: number;
   text: string;
 };

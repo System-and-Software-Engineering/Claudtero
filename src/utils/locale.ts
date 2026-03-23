@@ -3,6 +3,32 @@ import { FluentMessageId } from "../../typings/i10n";
 
 export { initLocale, getString, getLocaleID };
 
+type LocaleArgs = Record<string, unknown>;
+
+type LocaleOptions = {
+  branch?: string;
+  args?: LocaleArgs;
+};
+
+type LocaleMessageAttribute = {
+  name: string;
+  value: string;
+};
+
+type LocaleMessage = {
+  value?: string;
+  attributes?: LocaleMessageAttribute[] | Record<string, string>;
+};
+
+type LocalizationLike = {
+  formatMessagesSync(messages: Array<{ id: string; args?: LocaleArgs }>): LocaleMessage[];
+};
+
+type LocaleInput =
+  | [localeString: FluentMessageId]
+  | [localeString: FluentMessageId, branch: string]
+  | [localeString: FluentMessageId, options: LocaleOptions];
+
 /**
  * Initialize locale data
  */
@@ -11,7 +37,7 @@ function initLocale() {
     typeof Localization === "undefined"
       ? ztoolkit.getGlobal("Localization")
       : Localization
-  )([`${config.addonRef}-addon.ftl`], true);
+  )([`${config.addonRef}-addon.ftl`], true) as LocalizationLike;
   addon.data.locale = {
     current: l10n,
   };
@@ -44,44 +70,50 @@ function getString(localString: FluentMessageId): string;
 function getString(localString: FluentMessageId, branch: string): string;
 function getString(
   localeString: FluentMessageId,
-  options: { branch?: string | undefined; args?: Record<string, unknown> },
+  options: LocaleOptions,
 ): string;
-function getString(...inputs: any[]) {
-  if (inputs.length === 1) {
-    return _getString(inputs[0]);
-  } else if (inputs.length === 2) {
-    if (typeof inputs[1] === "string") {
-      return _getString(inputs[0], { branch: inputs[1] });
-    } else {
-      return _getString(inputs[0], inputs[1]);
-    }
+function getString(...inputs: LocaleInput): string {
+  const [localeString, secondArgument] = inputs;
+
+  if (secondArgument === undefined) {
+    return _getString(localeString);
   } else {
-    throw new Error("Invalid arguments");
+    return _getString(
+      localeString,
+      typeof secondArgument === "string"
+        ? { branch: secondArgument }
+        : secondArgument,
+    );
   }
 }
 
 function _getString(
   localeString: FluentMessageId,
-  options: { branch?: string | undefined; args?: Record<string, unknown> } = {},
+  options: LocaleOptions = {},
 ): string {
   const localStringWithPrefix = `${config.addonRef}-${localeString}`;
   const { branch, args } = options;
-  const pattern = addon.data.locale?.current.formatMessagesSync([
+  const pattern = addon.data.locale?.current?.formatMessagesSync?.([
     { id: localStringWithPrefix, args },
   ])[0];
   if (!pattern) {
     return localStringWithPrefix;
   }
   if (branch && pattern.attributes) {
-    for (const attr of pattern.attributes) {
-      if (attr.name === branch) {
-        return attr.value;
+    if (Array.isArray(pattern.attributes)) {
+      for (const attribute of pattern.attributes) {
+        if (attribute.name === branch) {
+          return attribute.value;
+        }
       }
+    } else if (branch in pattern.attributes) {
+      return pattern.attributes[branch] || localStringWithPrefix;
     }
-    return pattern.attributes[branch] || localStringWithPrefix;
-  } else {
-    return pattern.value || localStringWithPrefix;
+
+    return localStringWithPrefix;
   }
+
+  return pattern.value || localStringWithPrefix;
 }
 
 function getLocaleID(id: FluentMessageId) {
