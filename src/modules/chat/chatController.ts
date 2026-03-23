@@ -5,6 +5,12 @@ import { appendMessage, getSession } from "./sessionStore";
 import { DEFAULT_SYSTEM_PROMPT } from "./systemPrompt";
 import { getSelectedPdfText } from "../pdf/getSelectedText";
 import { getPref } from "../../utils/prefs";
+import {
+    buildDocumentContext,
+    buildUserMessageWithContext,
+    type ContextModeDecision,
+    decideContextMode,
+} from "./documentContext";
 
 /**
  * Request payload coming from the UI layer
@@ -21,6 +27,11 @@ export interface ChatRequest {
  */
 export interface ChatResult {
     assistantText: string;
+}
+
+export interface PreparedChatRequest {
+    settings: ResolvedProviderSettings;
+    finalUserContent: string;
 }
 
 interface ResolvedProviderSettings {
@@ -84,19 +95,65 @@ export function getAvailableModels(): ModelCatalog {
     return getModelCatalog();
 }
 
+export async function prepareChatRequest(
+    req: ChatRequest,
+): Promise<PreparedChatRequest> {
+    const { provider, model, userText } = req;
+    const settings = resolveProviderSettings(provider, model);
+    const selected = await getSelectedPdfText();
+    const decision = await decideContextMode({
+        provider,
+        apiKey: settings.apiKey,
+        model: settings.model,
+        userText,
+    });
+    const builtContext = await buildDocumentContext({
+        ztoolkit,
+        decision,
+        userText,
+    });
+    const effectiveDecision: ContextModeDecision =
+        builtContext.appliedMode && builtContext.appliedMode !== decision.mode
+            ? {
+                  ...decision,
+                  mode: builtContext.appliedMode,
+                  reason: builtContext.fallbackReason ?? decision.reason,
+              }
+            : decision;
+
+    return {
+        settings,
+        finalUserContent: buildUserMessageWithContext({
+            userText,
+            selectedText: selected,
+            decision: effectiveDecision,
+            documentContext: builtContext.context,
+        }),
+    };
+}
+
 /**
  * Main chat handler used by the UI.
  *
  * Flow:
  * - Ensure session has a system prompt
- * - Optionally add selected PDF text as extra context
- * - Append user message to session history
- * - Call provider API (OpenAI/OpenRouter)
+ * - Ask a cheap routing request which document context mode to use
+ * - Build the matching document context from the open PDF
+ * - Call provider API with ephemeral per-request context
+ * - Append only the plain user message to session history
  * - Append assistant reply
  */
 export async function handleChatSend(req: ChatRequest): Promise<ChatResult> {
-    const { sessionId, provider, model, userText } = req;
-    const settings = resolveProviderSettings(provider, model);
+    return handlePreparedChatSend(req);
+}
+
+export async function handlePreparedChatSend(
+    req: ChatRequest,
+    preparedRequest?: PreparedChatRequest,
+): Promise<ChatResult> {
+    const { sessionId, provider, userText } = req;
+    const resolvedRequest = preparedRequest ?? (await prepareChatRequest(req));
+    const { settings, finalUserContent } = resolvedRequest;
 
     // Initialize with sys system prompt exactly once per session
     const session = getSession(sessionId);
@@ -107,22 +164,20 @@ export async function handleChatSend(req: ChatRequest): Promise<ChatResult> {
         });
     }
 
-    // Optional context from PDF selection
-    const selected = await getSelectedPdfText();
-    const finalUserContent = selected
-        ? `Selected PDF text:\n${selected}\n\nUser questions:\n${userText}`
-        : userText;
-
-    appendMessage(sessionId, { role: "user", content: finalUserContent });
+    const requestMessages = [
+        ...getSession(sessionId),
+        { role: "user", content: finalUserContent },
+    ] as ChatMessage[];
 
     const assistantText = await sendChatCompletions({
         provider,
         apiKey: settings.apiKey,
         model: settings.model,
-        messages: getSession(sessionId) as ChatMessage[],
+        messages: requestMessages,
         temperature: settings.temperature,
     });
 
+    appendMessage(sessionId, { role: "user", content: userText });
     appendMessage(sessionId, { role: "assistant", content: assistantText });
 
     return { assistantText };

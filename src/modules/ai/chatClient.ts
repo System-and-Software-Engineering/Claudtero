@@ -48,6 +48,8 @@ export interface ChatCompletionParams {
     model: string;
     messages: ChatMessage[];
     temperature?: number;
+    maxTokens?: number;
+    responseFormat?: { type: "json_object" };
 }
 
 /* ------------------------------------------------------------------ */
@@ -120,6 +122,8 @@ export async function sendChatCompletions(
         model,
         messages,
         temperature = 0.2,
+        maxTokens,
+        responseFormat,
     } = params;
 
     if (!apiKey) {
@@ -140,6 +144,8 @@ export async function sendChatCompletions(
             model,
             messages,
             temperature,
+            ...(typeof maxTokens === "number" ? { max_tokens: maxTokens } : {}),
+            ...(responseFormat ? { response_format: responseFormat } : {}),
         }),
     });
 

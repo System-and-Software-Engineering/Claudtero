@@ -1,9 +1,8 @@
 import { getLocaleID } from "../utils/locale";
 import { config } from "../../package.json";
-import { getAvailableModels, handleChatSend } from "./chat/chatController";
+import { getAvailableModels, handlePreparedChatSend, prepareChatRequest } from "./chat/chatController";
 import type { AIProvider } from "./ai/modelCatalog";
 import { renderMarkdown } from "./chat/markdown";
-import { extractOpenPdfText, getCurrentOpenPdfPage, extractOpenPdfPageText } from "./pdf/getPdfText";
 import { getPref } from "../utils/prefs";
 import { it } from "node:test";
 import { parseEnv } from "util";
@@ -407,29 +406,30 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
 
     const provider = providerSelect.value as AIProvider;
     const model = modelSelect.value;
+    let preparedRequest: Awaited<ReturnType<typeof prepareChatRequest>> | null = null;
 
     try {
-      const fullPdfText = await extractOpenPdfText(ztoolkit);
-      const pageNumber = await getCurrentOpenPdfPage(ztoolkit);
-      let pageText = null;
-      if (pageNumber != null) {
-        pageText = await extractOpenPdfPageText(ztoolkit, pageNumber);
-      }
-      if (fullPdfText) {
+      preparedRequest = await prepareChatRequest({
+        sessionId: String(itemID),
+        provider,
+        model,
+        userText: text,
+      });
+      if (preparedRequest.finalUserContent) {
         chatsByItem[itemID].push({
-          text: `page number: ${pageNumber} [debug] Full PDF text\n\n${fullPdfText}`,
+          text: `[debug] Text sent to LLM\n\n${preparedRequest.finalUserContent}`,
           from: "other",
         });
       } else {
         chatsByItem[itemID].push({
-          text: "[debug] Full PDF text extraction returned no content.",
+          text: "[debug] No request context was prepared for the LLM.",
           from: "other",
         });
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       chatsByItem[itemID].push({
-        text: `[debug] Full PDF text extraction failed: ${message}`,
+        text: `[debug] Failed to prepare text sent to LLM: ${message}`,
         from: "other",
       });
     }
@@ -453,12 +453,12 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
       // Use itemID as a simple per-item session key
       const sessionId = String(itemID);
 
-      const result = await handleChatSend({
+      const result = await handlePreparedChatSend({
         sessionId,
         provider,
         model,
         userText: text,
-      });
+      }, preparedRequest ?? undefined);
 
       thinking.text = result.assistantText;
       renderMessages();
