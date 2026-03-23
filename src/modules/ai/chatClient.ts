@@ -1,7 +1,7 @@
 import type { AIProvider } from "../ai/modelCatalog";
 
 /**
- * Chat completion client for OpenAI and OpenRouter.
+ * Chat completion client for OpenAI-compatible providers.
  *
  * This module intentionally abstracts both providers behind
  * a single function so the rest of the plugin does not care
@@ -10,6 +10,7 @@ import type { AIProvider } from "../ai/modelCatalog";
  * Supported endpoints:
  * - OpenAI:     POST https://api.openai.com/v1/chat/completions
  * - OpenRouter: POST https://openrouter.ai/api/v1/chat/completions
+ * - Goethe Uni: POST https://litellm.s.studiumdigitale.uni-frankfurt.de/v1/chat/completions
  *
  * NOTE:
  * - This is a NON-streaming implementation.
@@ -25,7 +26,7 @@ import type { AIProvider } from "../ai/modelCatalog";
 
 /**
  * Allowed chat roles for Chat Completions.
- * Matches OpenAI / OpenRouter specification.
+ * Matches OpenAI-compatible chat specification.
  */
 export type ChatRole = "system" | "user" | "assistant";
 
@@ -62,6 +63,8 @@ function getBaseUrl(provider: AIProvider): string {
             return "https://api.openai.com/v1";
         case "openrouter":
             return "https://openrouter.ai/api/v1";
+        case "goethe":
+            return "https://litellm.s.studiumdigitale.uni-frankfurt.de/v1";
         default:
             // Exhaustiveness check (helps TypeScript catch errors)
             throw new Error(`Unsupported AI provider: ${provider}`);
@@ -121,6 +124,10 @@ export async function sendChatCompletions(
 
     if (!apiKey) {
         throw new Error(`Missing API Key for provider: ${provider}`);
+    }
+
+    if (!model.trim()) {
+        throw new Error(`Missing model for provider: ${provider}`);
     }
 
     const baseUrl = getBaseUrl(provider);

@@ -2,7 +2,10 @@ import { getLocaleID } from "../utils/locale";
 import { config } from "../../package.json";
 import { getAvailableModels, handleChatSend } from "./chat/chatController";
 import type { AIProvider } from "./ai/modelCatalog";
+import { extractOpenPdfText, getCurrentOpenPdfPage, extractOpenPdfPageText } from "./pdf/getPdfText";
+import { getPref } from "../utils/prefs";
 import { it } from "node:test";
+import { parseEnv } from "util";
 
 
 type ChatEntry = { text: string; from: "me" | "other" };
@@ -349,7 +352,12 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
   }
 
   // Default provider = first in catalog
-  const defaultProvider = providers[0]?.provider ?? "openai";
+  const configuredProvider = String(getPref("llmProvider") ?? "");
+  const defaultProvider = providers.some(
+    (provider) => provider.provider === configuredProvider,
+  )
+    ? (configuredProvider as AIProvider)
+    : (providers[0]?.provider ?? "openai");
   providerSelect.value = defaultProvider;
   renderModelsForProvider(defaultProvider);
 
@@ -399,6 +407,32 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
 
     const provider = providerSelect.value as AIProvider;
     const model = modelSelect.value;
+
+    try {
+      const fullPdfText = await extractOpenPdfText(ztoolkit);
+      const pageNumber = await getCurrentOpenPdfPage(ztoolkit);
+      let pageText = null;
+      if (pageNumber != null) {
+        pageText = await extractOpenPdfPageText(ztoolkit, pageNumber);
+      }
+      if (fullPdfText) {
+        chatsByItem[itemID].push({
+          text: `page number: ${pageNumber} [debug] Full PDF text\n\n${fullPdfText}`,
+          from: "other",
+        });
+      } else {
+        chatsByItem[itemID].push({
+          text: "[debug] Full PDF text extraction returned no content.",
+          from: "other",
+        });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      chatsByItem[itemID].push({
+        text: `[debug] Full PDF text extraction failed: ${message}`,
+        from: "other",
+      });
+    }
 
     // Show user's message immediately
     chatsByItem[itemID].push({ text, from: "me" });

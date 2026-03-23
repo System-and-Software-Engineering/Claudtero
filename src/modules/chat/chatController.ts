@@ -4,6 +4,7 @@ import { getModelCatalog, type AIProvider, type ModelCatalog } from "../ai/model
 import { appendMessage, getSession } from "./sessionStore";
 import { DEFAULT_SYSTEM_PROMPT } from "./systemPrompt";
 import { getSelectedPdfText } from "../pdf/getSelectedText";
+import { getPref } from "../../utils/prefs";
 
 /**
  * Request payload coming from the UI layer
@@ -20,6 +21,58 @@ export interface ChatRequest {
  */
 export interface ChatResult {
     assistantText: string;
+}
+
+interface ResolvedProviderSettings {
+    apiKey: string;
+    model: string;
+    temperature: number;
+    systemPrompt: string;
+}
+
+function parseTemperature(value: unknown, fallback = 0.2): number {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function resolveProviderSettings(
+    provider: AIProvider,
+    requestedModel: string,
+): ResolvedProviderSettings {
+    const keys = getDevKeys();
+
+    switch (provider) {
+        case "openai": {
+            const configuredPrompt = String(getPref("openaiPrompt") ?? "").trim();
+            return {
+                apiKey: String(getPref("openaiApiKey") ?? "").trim() || keys.openai,
+                model:
+                    requestedModel.trim() ||
+                    String(getPref("openaiModel") ?? "").trim() ||
+                    "gpt-4o",
+                temperature: parseTemperature(getPref("openaiTemp"), 0.2),
+                systemPrompt: configuredPrompt || DEFAULT_SYSTEM_PROMPT,
+            };
+        }
+        case "openrouter":
+            return {
+                apiKey: keys.openrouter,
+                model: requestedModel.trim() || "anthropic/claude-3.5-sonnet",
+                temperature: 0.2,
+                systemPrompt: DEFAULT_SYSTEM_PROMPT,
+            };
+        case "goethe": {
+            const configuredPrompt = String(getPref("goethePrompt") ?? "").trim();
+            return {
+                apiKey: String(getPref("goetheApiKey") ?? "").trim(),
+                model: requestedModel.trim() || String(getPref("goetheModel") ?? "").trim(),
+                temperature: parseTemperature(getPref("goetheTemp"), 0.2),
+                systemPrompt: configuredPrompt || DEFAULT_SYSTEM_PROMPT,
+            };
+        }
+        default:
+            throw new Error(`Unsupported AI provider: ${provider}`);
+    }
 }
 
 /**
@@ -43,14 +96,15 @@ export function getAvailableModels(): ModelCatalog {
  */
 export async function handleChatSend(req: ChatRequest): Promise<ChatResult> {
     const { sessionId, provider, model, userText } = req;
-
-    const keys = getDevKeys();
-    const apiKey = provider === "openai" ? keys.openai : keys.openrouter;
+    const settings = resolveProviderSettings(provider, model);
 
     // Initialize with sys system prompt exactly once per session
     const session = getSession(sessionId);
     if (session.length === 0) {
-        appendMessage(sessionId, { role: "system", content: DEFAULT_SYSTEM_PROMPT});
+        appendMessage(sessionId, {
+            role: "system",
+            content: settings.systemPrompt,
+        });
     }
 
     // Optional context from PDF selection
@@ -63,9 +117,10 @@ export async function handleChatSend(req: ChatRequest): Promise<ChatResult> {
 
     const assistantText = await sendChatCompletions({
         provider,
-        apiKey,
-        model,
+        apiKey: settings.apiKey,
+        model: settings.model,
         messages: getSession(sessionId) as ChatMessage[],
+        temperature: settings.temperature,
     });
 
     appendMessage(sessionId, { role: "assistant", content: assistantText });
