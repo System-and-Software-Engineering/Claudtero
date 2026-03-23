@@ -1,5 +1,5 @@
 import { config } from "../../package.json";
-import { openSidebarAndShowChat } from "./chat";
+import { openSidebarAndShowChat, setPendingHighlightedSelection } from "./chat";
 
 export class ContextMenu {
   static setup() {
@@ -69,22 +69,24 @@ export class ContextMenu {
     });
 
     askButton.addEventListener("click", (ev: MouseEvent) => {
-
-      //ztoolkit.log("=== ASK WITH CLAUDTERO ===");
-      //ztoolkit.log("Selected text:", selectedText);
-
-      // Escape the selected text properly for quotes and backslashes
-      const escapedSelection = selectedText.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-      // Format: "selection"\n\n (where user can continue typing)
-      const prefillText = '"' + escapedSelection + '"\n\n';
-
-      //ztoolkit.log("Prefill text:", prefillText);
-
-      // Get current item from reader
       const itemID = reader?.itemID;
+      if (!itemID) {
+        return;
+      }
 
-      // Open sidebar, show chat, and prefill the input
-      openSidebarAndShowChat(undefined, itemID, prefillText);
+      const rawAnnotation = annotation as typeof annotation & {
+        annotationPosition?: string | { pageIndex?: number };
+      };
+      const position = rawAnnotation.position ?? rawAnnotation.annotationPosition ?? null;
+      const parsedPosition = typeof position === "string" ? JSON.parse(position) : position;
+      const pageIndex = Number(parsedPosition?.pageIndex);
+
+      setPendingHighlightedSelection(itemID, {
+        text: selectedText,
+        pageNumber: Number.isFinite(pageIndex) ? pageIndex + 1 : null,
+      });
+
+      openSidebarAndShowChat(undefined, itemID);
     });
 
     // Add to popup

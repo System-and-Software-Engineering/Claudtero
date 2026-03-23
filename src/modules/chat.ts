@@ -4,17 +4,52 @@ import { getAvailableModels, handlePreparedChatSend, prepareChatRequest } from "
 import type { AIProvider } from "./ai/modelCatalog";
 import { renderMarkdown } from "./chat/markdown";
 import { getPref } from "../utils/prefs";
-import { it } from "node:test";
-import { parseEnv } from "util";
 
 
 type ChatEntry = { text: string; from: "me" | "other" };
+type PendingHighlightedSelection = { text: string; pageNumber: number | null };
 const chatsByItem: Record<number, ChatEntry[]> = {};
+const pendingHighlightedSelectionsByItem: Record<number, PendingHighlightedSelection | undefined> = {};
+
+function getRelatedChatItemIDs(itemID: number): number[] {
+  const ids = new Set<number>([itemID]);
+  const item = Zotero.Items.get(itemID);
+  if (item?.isAttachment()) {
+    const parentItemID = item.parentItemID;
+    if (parentItemID) {
+      ids.add(parentItemID);
+    }
+  }
+  const parentItemID = item?.parentItemID;
+  if (parentItemID) {
+    ids.add(parentItemID);
+  }
+  return [...ids];
+}
+
+function getPendingHighlightedSelectionForItem(
+  itemID: number,
+): PendingHighlightedSelection | undefined {
+  for (const relatedItemID of getRelatedChatItemIDs(itemID)) {
+    const selection = pendingHighlightedSelectionsByItem[relatedItemID];
+    if (selection) {
+      return selection;
+    }
+  }
+  return undefined;
+}
+
+function clearPendingHighlightedSelectionForItem(itemID: number) {
+  for (const relatedItemID of getRelatedChatItemIDs(itemID)) {
+    delete pendingHighlightedSelectionsByItem[relatedItemID];
+  }
+}
 
 let paneKey = "";
 
 // Global reference to the current render function for external updates
 let currentRenderMessages: (() => void) | null = null;
+let currentRenderHighlightedSelection: (() => void) | null = null;
 let currentItemID: number | null = null;
 let currentBody: HTMLElement | null = null;
 
@@ -52,6 +87,23 @@ export function sendToSidebarChat(text: string, itemID?: number) {
   // If we have a render function and it's for the same item, update the UI
   if (currentRenderMessages && currentItemID === targetItemID) {
     currentRenderMessages();
+  }
+}
+
+export function setPendingHighlightedSelection(
+  itemID: number,
+  selection: PendingHighlightedSelection,
+) {
+  for (const relatedItemID of getRelatedChatItemIDs(itemID)) {
+    pendingHighlightedSelectionsByItem[relatedItemID] = selection;
+  }
+
+  if (
+    currentItemID &&
+    getRelatedChatItemIDs(itemID).includes(currentItemID) &&
+    currentRenderHighlightedSelection
+  ) {
+    currentRenderHighlightedSelection();
   }
 }
 
@@ -163,6 +215,11 @@ export function openSidebarAndShowChat(
               input.dispatchEvent(inputEvent);
             }
           }
+        } else {
+          const input = currentBody.querySelector(
+            ".chat-pane__input",
+          ) as HTMLTextAreaElement;
+          input?.focus();
         }
       }
     }
@@ -313,6 +370,9 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
   const inputArea = doc.createElement("div");
   inputArea.className = "chat-pane__input-area";
 
+  const highlightedSelectionBox = doc.createElement("div");
+  highlightedSelectionBox.className = "chat-pane__selection";
+
   // Load providers + models from backend
   const catalog = getAvailableModels();
   const providers = catalog.providers;
@@ -375,6 +435,42 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
   input.className = "chat-pane__input";
   input.rows = 2;
 
+  const renderHighlightedSelection = () => {
+    const pendingSelection = getPendingHighlightedSelectionForItem(itemID);
+    highlightedSelectionBox.replaceChildren();
+    highlightedSelectionBox.hidden = !pendingSelection;
+
+    if (!pendingSelection) {
+      return;
+    }
+
+    const icon = doc.createElement("div");
+    icon.className = "chat-pane__selection-icon";
+    icon.textContent = "↩";
+
+    const content = doc.createElement("div");
+    content.className = "chat-pane__selection-content";
+
+    const text = doc.createElement("div");
+    text.className = "chat-pane__selection-text";
+    text.textContent = `“${pendingSelection.text}”`;
+
+    content.append(text);
+
+    const clearButton = doc.createElement("button");
+    clearButton.type = "button";
+    clearButton.className = "chat-pane__selection-clear";
+    clearButton.setAttribute("aria-label", "Remove selected text");
+    clearButton.textContent = "×";
+    clearButton.addEventListener("click", () => {
+      clearPendingHighlightedSelectionForItem(itemID);
+      renderHighlightedSelection();
+      input.focus();
+    });
+
+    highlightedSelectionBox.append(icon, content, clearButton);
+  };
+
   // Use icon button
   const sendButton = doc.createElement("button") as HTMLButtonElement;
   sendButton.className = "chat-pane__send";
@@ -406,6 +502,7 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
 
     const provider = providerSelect.value as AIProvider;
     const model = modelSelect.value;
+    const pendingSelection = getPendingHighlightedSelectionForItem(itemID);
     let preparedRequest: Awaited<ReturnType<typeof prepareChatRequest>> | null = null;
 
     try {
@@ -414,6 +511,8 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
         provider,
         model,
         userText: text,
+        selectedText: pendingSelection?.text,
+        selectedPageNumber: pendingSelection?.pageNumber ?? null,
       });
       if (preparedRequest.finalUserContent) {
         chatsByItem[itemID].push({
@@ -436,6 +535,10 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
 
     // Show user's message immediately
     chatsByItem[itemID].push({ text, from: "me" });
+    if (pendingSelection) {
+      clearPendingHighlightedSelectionForItem(itemID);
+      renderHighlightedSelection();
+    }
     input.value = "";
     renderMessages();
     updateSendState();
@@ -458,6 +561,8 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
         provider,
         model,
         userText: text,
+        selectedText: pendingSelection?.text,
+        selectedPageNumber: pendingSelection?.pageNumber ?? null,
       }, preparedRequest ?? undefined);
 
       thinking.text = result.assistantText;
@@ -483,6 +588,8 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
   });
   input.addEventListener("input", updateSendState);
   updateSendState();
+  currentRenderHighlightedSelection = renderHighlightedSelection;
+  renderHighlightedSelection();
 
   // Build hierarchy: input wrapper contains input + send button
   inputWrapper.appendChild(providerSelect);
@@ -490,6 +597,7 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
   inputWrapper.appendChild(sendButton);
 
   // Input area contains input wrapper, then model select below
+  inputArea.appendChild(highlightedSelectionBox);
   inputArea.appendChild(input);
   inputArea.appendChild(inputWrapper);
 

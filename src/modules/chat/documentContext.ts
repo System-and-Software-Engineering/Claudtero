@@ -549,6 +549,45 @@ async function buildWholeDocumentContext(ztoolkit: any): Promise<string> {
   return pageContext;
 }
 
+export async function buildSinglePageContext(options: {
+  ztoolkit: any;
+  pageNumber: number;
+}): Promise<string> {
+  const { ztoolkit, pageNumber } = options;
+
+  if (!Number.isInteger(pageNumber) || pageNumber < 1) {
+    return "";
+  }
+
+  const directPageText = await extractOpenPdfPageText(ztoolkit, pageNumber);
+  const directContext = formatPageContexts(
+    [{ pageNumber, text: directPageText }],
+    `Document context mode: page_window (selected text source page ${pageNumber})`,
+  );
+  if (directContext) {
+    return directContext;
+  }
+
+  const extractedPages = await extractOpenPdfAllPageTexts(ztoolkit);
+  const extractedPageText =
+    extractedPages.find((page) => page.pageNumber === pageNumber)?.text ?? "";
+  const extractedContext = formatPageContexts(
+    [{ pageNumber, text: extractedPageText }],
+    `Document context mode: page_window (selected text source page ${pageNumber})`,
+  );
+  if (extractedContext) {
+    return extractedContext;
+  }
+
+  const approximatePages = await getApproximateDocumentPages(ztoolkit);
+  const approximatePageText =
+    approximatePages.find((page) => page.pageNumber === pageNumber)?.text ?? "";
+  return formatPageContexts(
+    [{ pageNumber, text: approximatePageText }],
+    `Document context mode: page_window (approximated selected text source page ${pageNumber})`,
+  );
+}
+
 async function buildDocumentContextForMode(options: {
   ztoolkit: any;
   mode: ContextMode;

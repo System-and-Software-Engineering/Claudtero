@@ -6,6 +6,7 @@ import { DEFAULT_SYSTEM_PROMPT } from "./systemPrompt";
 import { getSelectedPdfText } from "../pdf/getSelectedText";
 import { getPref } from "../../utils/prefs";
 import {
+    buildSinglePageContext,
     buildDocumentContext,
     buildUserMessageWithContext,
     type ContextModeDecision,
@@ -20,6 +21,8 @@ export interface ChatRequest {
     provider: AIProvider;
     model: string;
     userText: string;
+    selectedText?: string;
+    selectedPageNumber?: number | null;
 }
 
 /**
@@ -100,7 +103,37 @@ export async function prepareChatRequest(
 ): Promise<PreparedChatRequest> {
     const { provider, model, userText } = req;
     const settings = resolveProviderSettings(provider, model);
-    const selected = await getSelectedPdfText();
+    const selected = (req.selectedText ?? (await getSelectedPdfText())).trim();
+
+    if (selected) {
+        const selectedPageNumber =
+            typeof req.selectedPageNumber === "number" && req.selectedPageNumber > 0
+                ? req.selectedPageNumber
+                : null;
+        const decision: ContextModeDecision = {
+            mode: "page_window",
+            reason:
+                "The user provided highlighted text, so only the source page was sent as context.",
+            keywords: [],
+        };
+        const documentContext = selectedPageNumber
+            ? await buildSinglePageContext({
+                  ztoolkit,
+                  pageNumber: selectedPageNumber,
+              })
+            : "";
+
+        return {
+            settings,
+            finalUserContent: buildUserMessageWithContext({
+                userText,
+                selectedText: selected,
+                decision,
+                documentContext,
+            }),
+        };
+    }
+
     const decision = await decideContextMode({
         provider,
         apiKey: settings.apiKey,

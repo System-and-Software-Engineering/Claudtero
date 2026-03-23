@@ -2,6 +2,7 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
+  min-width: 0;
   padding: 8px;
   background: #f7f7f8;
   border: 1px solid #d8d8dc;
@@ -127,7 +128,8 @@
 .chat-pane__input-area {
   display: flex;
   flex-direction: column;
-  gap: 0;
+  gap: 8px;
+  min-width: 0;
   padding: 10px;
   border-radius: 4px;
   background: #ffffff;
@@ -135,6 +137,88 @@
   transition:
     box-shadow 120ms ease,
     border-color 120ms ease;
+}
+
+.chat-pane__selection {
+  position: relative;
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  height: 48px;
+  min-height: 48px;
+  padding: 0;
+  border: 1px solid #e3e0da;
+  border-radius: 18px;
+  background: #efede8;
+  color: #6b6761;
+  overflow: hidden;
+}
+
+.chat-pane__selection[hidden] {
+  display: none;
+}
+
+.chat-pane__selection-icon,
+.chat-pane__selection-clear {
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  color: #7b766f;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.chat-pane__selection-icon {
+  top: 11px;
+  left: 14px;
+  font-size: 18px;
+}
+
+.chat-pane__selection-content {
+  position: absolute;
+  top: 0;
+  left: 44px;
+  right: 42px;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.chat-pane__selection-text {
+  display: block;
+  width: 100%;
+  font-size: 12px;
+  line-height: 1.35;
+  color: #6f6a64;
+  white-space: nowrap;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-sizing: border-box;
+}
+
+.chat-pane__selection-clear {
+  top: 8px;
+  right: 10px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  appearance: none;
+  -moz-appearance: none;
+  font-size: 28px;
+  line-height: 1;
+}
+
+.chat-pane__selection-clear:hover {
+  color: #4f4a45;
 }
 
 .chat-pane__input-area:focus-within {
@@ -278,6 +362,21 @@
   .chat-pane__input-area {
     background: #1c202a;
     border: 1px solid #3a3f4d;
+  }
+  .chat-pane__selection {
+    border-color: #3a3f4d;
+    background: #2d3137;
+    color: #d5d1cb;
+  }
+  .chat-pane__selection-icon,
+  .chat-pane__selection-clear {
+    color: #b1aaa1;
+  }
+  .chat-pane__selection-text {
+    color: #ddd7cf;
+  }
+  .chat-pane__selection-clear:hover {
+    color: #f2ece4;
   }
   .chat-pane__input-area:focus-within {
     border-color: #6ba1ff;
