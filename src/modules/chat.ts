@@ -3,6 +3,7 @@ import { config } from "../../package.json";
 import { getAvailableModels, handlePreparedChatSend, prepareChatRequest } from "./chat/chatController";
 import type { AIProvider } from "./ai/modelCatalog";
 import { renderMarkdown } from "./chat/markdown";
+import { env } from "../config/env";
 import { getPref } from "../utils/prefs";
 
 
@@ -514,12 +515,12 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
         selectedText: pendingSelection?.text,
         selectedPageNumber: pendingSelection?.pageNumber ?? null,
       });
-      if (preparedRequest.finalUserContent) {
+      if (env.showDebugUi && preparedRequest.finalUserContent) {
         chatsByItem[itemID].push({
           text: `[debug] Text sent to LLM\n\n${preparedRequest.finalUserContent}`,
           from: "other",
         });
-      } else {
+      } else if (env.showDebugUi) {
         chatsByItem[itemID].push({
           text: "[debug] No request context was prepared for the LLM.",
           from: "other",
@@ -527,10 +528,12 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      chatsByItem[itemID].push({
-        text: `[debug] Failed to prepare text sent to LLM: ${message}`,
-        from: "other",
-      });
+      if (env.showDebugUi) {
+        chatsByItem[itemID].push({
+          text: `[debug] Failed to prepare text sent to LLM: ${message}`,
+          from: "other",
+        });
+      }
     }
 
     // Show user's message immediately

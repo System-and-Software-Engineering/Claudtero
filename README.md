@@ -233,6 +233,7 @@ This project uses a single codebase with two explicit app environments:
 Use these commands:
 
 - `npm start` or `npm run start:dev`: run the plugin in development mode
+- `npm run start:prod`: run Zotero directly with the production environment loaded from the build output
 - `npm run build:dev`: build a development artifact
 - `npm run build` or `npm run build:prod`: build a production artifact
 - `npm run release`: release using the production environment
@@ -260,6 +261,8 @@ You can also:
 Run `npm run build` to build the plugin in production mode. The build output will be located in the `.scaffold/build/` directory.
 
 Production builds are written to `.scaffold/build/prod/`. Development builds are written to `.scaffold/build/dev/`.
+
+If you want to test the production environment locally without manually installing the XPI, run `npm run start:prod`. This launches Zotero using the production environment settings while still loading the plugin from the scaffold build output.
 
 For detailed build steps, refer to the [zotero-plugin-scaffold documentation](https://northword.github.io/zotero-plugin-scaffold/build.html). In short, the process can be divided into the following steps:
 

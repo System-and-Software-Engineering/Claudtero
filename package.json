@@ -23,6 +23,7 @@
   "scripts": {
     "start": "node ./scripts/run-with-app-env.mjs dev zotero-plugin serve",
     "start:dev": "node ./scripts/run-with-app-env.mjs dev zotero-plugin serve",
+    "start:prod": "node ./scripts/run-with-app-env.mjs prod zotero-plugin serve",
     "build": "node ./scripts/run-with-app-env.mjs prod zotero-plugin build && tsc --noEmit",
     "build:dev": "node ./scripts/run-with-app-env.mjs dev zotero-plugin build && tsc --noEmit",
     "build:prod": "node ./scripts/run-with-app-env.mjs prod zotero-plugin build && tsc --noEmit",
