@@ -2,6 +2,7 @@ import { getLocaleID } from "../utils/locale";
 import { config } from "../../package.json";
 import { getAvailableModels, handleChatSend } from "./chat/chatController";
 import type { AIProvider } from "./ai/modelCatalog";
+import { renderMarkdown } from "./chat/markdown";
 import { extractOpenPdfText, getCurrentOpenPdfPage, extractOpenPdfPageText } from "./pdf/getPdfText";
 import { getPref } from "../utils/prefs";
 import { it } from "node:test";
@@ -296,11 +297,10 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
       return;
     }
     for (const msg of chatsByItem[itemID]) {
-      const p = doc.createElement("div");
-      p.textContent = msg.text;
-      p.className = `chat-pane__message chat-pane__message--${msg.from}`;
-      p.style.whiteSpace = "pre-wrap"; // Preserve line breaks and wrap text
-      messagesBox.appendChild(p);
+      const message = doc.createElement("div");
+      message.className = `chat-pane__message chat-pane__message--${msg.from}`;
+      renderMarkdown(message, doc, msg.text);
+      messagesBox.appendChild(message);
     }
     messagesBox.scrollTop = messagesBox.scrollHeight;
   };
