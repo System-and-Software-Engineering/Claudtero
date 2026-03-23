@@ -1,32 +1,124 @@
-function getActiveReader(ztoolkit: any): any | null {
-  const ZoteroTabs = ztoolkit.getGlobal("Zotero_Tabs");
-  const ZoteroGlobal = (globalThis as any).Zotero;
-  const tabId = ZoteroTabs?.selectedID;
-  return ZoteroGlobal?.Reader?.getByTabID?.(tabId) ?? null;
+type ZToolkitLike = {
+  getGlobal(name: string): unknown;
+  log(...args: unknown[]): void;
+};
+
+type PdfPageText = {
+  pageNumber: number;
+  text: string;
+};
+
+interface ZoteroItemLike {
+  id: number;
+  attachmentText?: Promise<unknown> | unknown;
 }
 
-function getReaderWindow(reader: any): any | null {
+interface ZoteroReaderLike {
+  itemID?: number | null;
+  _item?: { id?: number | null };
+  _iframeWindow?: ReaderWindowLike;
+  _internalReader?: {
+    _iframeWindow?: ReaderWindowLike;
+    _window?: ReaderWindowLike;
+  };
+  iframeWindow?: ReaderWindowLike;
+}
+
+interface ReaderWindowLike {
+  wrappedJSObject?: ReaderWindowLike;
+  PDFViewerApplication?: PdfViewerApplicationLike;
+}
+
+interface PdfViewerApplicationLike {
+  initializedPromise?: Promise<unknown>;
+  pdfDocument?: PdfDocumentLike | null;
+  pdfViewer?: {
+    pdfDocument?: PdfDocumentLike | null;
+    currentPageNumber?: number | null;
+  };
+}
+
+interface PdfDocumentLike {
+  numPages?: number;
+  getPage(pageNumber: number): Promise<PdfPageLike>;
+}
+
+interface PdfPageLike {
+  getTextContent(): Promise<{ items?: Array<{ str?: string; hasEOL?: boolean }> }>;
+  cleanup?(): void;
+}
+
+interface RecognizerPageObjectLike {
+  str?: string;
+  text?: string;
+  content?: string;
+  extractedText?: string;
+  words?: unknown[];
+}
+
+interface ZoteroGlobalLike {
+  Reader?: {
+    getByTabID?(tabId: unknown): ZoteroReaderLike | null;
+  };
+  Items?: {
+    getAsync?(itemID: number): Promise<ZoteroItemLike | null>;
+  };
+  PDFWorker?: {
+    getRecognizerData?(
+      itemID: number,
+      includeText: boolean,
+    ): Promise<{ pages?: unknown[] } | undefined>;
+    getFullText?(
+      itemID: number,
+      unused: unknown,
+      includeText: boolean,
+    ): Promise<{ text?: unknown } | undefined>;
+  };
+}
+
+function getZoteroGlobal(): ZoteroGlobalLike {
+  return ((globalThis as { Zotero?: ZoteroGlobalLike }).Zotero ?? {}) as ZoteroGlobalLike;
+}
+
+function getActiveReader(ztoolkit: ZToolkitLike): ZoteroReaderLike | null {
+  const zoteroTabs = ztoolkit.getGlobal("Zotero_Tabs") as
+    | { selectedID?: unknown }
+    | undefined;
+  return getZoteroGlobal().Reader?.getByTabID?.(zoteroTabs?.selectedID) ?? null;
+}
+
+function getReaderWindow(reader: ZoteroReaderLike | null): ReaderWindowLike | null {
+  if (!reader) {
+    return null;
+  }
+
   return (
-    reader?._iframeWindow ??
-    reader?._internalReader?._iframeWindow ??
-    reader?._internalReader?._window ??
-    reader?.iframeWindow ??
+    reader._iframeWindow ??
+    reader._internalReader?._iframeWindow ??
+    reader._internalReader?._window ??
+    reader.iframeWindow ??
     null
   );
 }
 
-async function getOpenPdfDocument(ztoolkit: any): Promise<any | null> {
-  const reader = getActiveReader(ztoolkit);
+function getPdfViewerApplication(
+  reader: ZoteroReaderLike | null,
+): PdfViewerApplicationLike | null {
+  const readerWindow = getReaderWindow(reader);
+  const wrappedWindow = readerWindow?.wrappedJSObject ?? readerWindow;
+  return wrappedWindow?.PDFViewerApplication ?? null;
+}
 
+async function getOpenPdfDocument(
+  ztoolkit: ZToolkitLike,
+): Promise<PdfDocumentLike | null> {
+  const reader = getActiveReader(ztoolkit);
   if (!reader) {
     ztoolkit.log("[getOpenPdfDocument] No active reader found");
     return null;
   }
 
-  const readerWindow = getReaderWindow(reader);
-  const wrappedWindow = readerWindow?.wrappedJSObject ?? readerWindow;
-  const pdfApplication = wrappedWindow?.PDFViewerApplication;
-
+  const pdfApplication = getPdfViewerApplication(reader);
   if (pdfApplication?.initializedPromise) {
     await pdfApplication.initializedPromise;
   }
@@ -34,106 +126,143 @@ async function getOpenPdfDocument(ztoolkit: any): Promise<any | null> {
   return pdfApplication?.pdfDocument ?? pdfApplication?.pdfViewer?.pdfDocument ?? null;
 }
 
-async function extractPdfPageText(pdfPage: any): Promise<string> {
-  const textContent = await pdfPage.getTextContent();
-  const pageText = textContent.items
-    .map((item: any) => {
-      if (!item?.str) {
-        return item?.hasEOL ? "\n" : "";
-      }
-      return item.hasEOL ? `${item.str}\n` : item.str;
-    })
-    .join("")
-    .trim();
-
-  if (typeof pdfPage.cleanup === "function") {
-    pdfPage.cleanup();
-  }
-
-  return pageText;
+function normalizeText(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
 }
 
-async function getOpenPdfAttachment(reader: any): Promise<any | null> {
-  const ZoteroGlobal = (globalThis as any).Zotero;
-  const itemID = reader?.itemID ?? reader?._item?.id ?? null;
+function extractLooseText(value: unknown): string {
+  if (typeof value === "string") {
+    return value.trim();
+  }
+
+  if (!value || typeof value !== "object") {
+    return "";
+  }
+
+  const textLikeObject = value as RecognizerPageObjectLike;
+  return (
+    normalizeText(textLikeObject.str) ||
+    normalizeText(textLikeObject.text) ||
+    normalizeText(textLikeObject.content) ||
+    normalizeText(textLikeObject.extractedText)
+  );
+}
+
+function collectNestedText(values: unknown[]): string {
+  const parts: string[] = [];
+
+  for (const value of values) {
+    if (Array.isArray(value)) {
+      const nestedText = collectNestedText(value);
+      if (nestedText) {
+        parts.push(nestedText);
+      }
+      continue;
+    }
+
+    const text = extractLooseText(value);
+    if (text) {
+      parts.push(text);
+    }
+  }
+
+  return parts.join(" ").trim();
+}
+
+async function extractPdfPageText(pdfPage: PdfPageLike): Promise<string> {
+  try {
+    const textContent = await pdfPage.getTextContent();
+    return (textContent.items ?? [])
+      .map((item) => {
+        if (!item?.str) {
+          return item?.hasEOL ? "\n" : "";
+        }
+        return item.hasEOL ? `${item.str}\n` : item.str;
+      })
+      .join("")
+      .trim();
+  } finally {
+    if (typeof pdfPage.cleanup === "function") {
+      pdfPage.cleanup();
+    }
+  }
+}
+
+function getReaderItemId(reader: ZoteroReaderLike | null): number | null {
+  const itemId = reader?.itemID ?? reader?._item?.id ?? null;
+  return typeof itemId === "number" && itemId > 0 ? itemId : null;
+}
+
+async function getOpenPdfAttachment(
+  reader: ZoteroReaderLike | null,
+): Promise<ZoteroItemLike | null> {
+  const itemID = getReaderItemId(reader);
   if (!itemID) {
     return null;
   }
-  return (await ZoteroGlobal?.Items?.getAsync?.(itemID)) ?? null;
+
+  return (await getZoteroGlobal().Items?.getAsync?.(itemID)) ?? null;
 }
 
-function getRecognizerPageText(page: any): string {
+function getRecognizerPageText(page: unknown): string {
   if (typeof page === "string") {
     return page.trim();
   }
 
   if (Array.isArray(page)) {
-    const directText = page.find(
-      (value, index) => index >= 2 && typeof value === "string" && value.trim(),
-    );
-    if (typeof directText === "string") {
-      return directText.trim();
+    const directText = page
+      .slice(2)
+      .map((value) => extractLooseText(value))
+      .find(Boolean);
+    if (directText) {
+      return directText;
     }
 
-    const joinedWordText = page
-      .flatMap((value) => (Array.isArray(value) ? value : [value]))
-      .map((value) => {
-        if (typeof value === "string") {
-          return value;
-        }
-        if (value && typeof value.str === "string") {
-          return value.str;
-        }
-        if (value && typeof value.text === "string") {
-          return value.text;
-        }
-        return "";
-      })
-      .filter(Boolean)
-      .join(" ")
-      .trim();
-
-    if (joinedWordText) {
-      return joinedWordText;
-    }
+    return collectNestedText(page);
   }
 
-  if (page && typeof page === "object") {
-    const directText = [page.text, page.content, page.extractedText]
-      .find((value) => typeof value === "string" && value.trim());
-    if (typeof directText === "string") {
-      return directText.trim();
-    }
-
-    if (Array.isArray(page.words)) {
-      const wordText = page.words
-        .map((word: any) => {
-          if (typeof word === "string") {
-            return word;
-          }
-          if (word && typeof word.str === "string") {
-            return word.str;
-          }
-          if (word && typeof word.text === "string") {
-            return word.text;
-          }
-          return "";
-        })
-        .filter(Boolean)
-        .join(" ")
-        .trim();
-      if (wordText) {
-        return wordText;
-      }
-    }
+  if (!page || typeof page !== "object") {
+    return "";
   }
 
-  return "";
+  const recognizerPage = page as RecognizerPageObjectLike;
+  const directText =
+    normalizeText(recognizerPage.text) ||
+    normalizeText(recognizerPage.content) ||
+    normalizeText(recognizerPage.extractedText);
+  if (directText) {
+    return directText;
+  }
+
+  return Array.isArray(recognizerPage.words)
+    ? collectNestedText(recognizerPage.words)
+    : "";
+}
+
+function hasNonEmptyPageText(pages: PdfPageText[]): boolean {
+  return pages.some((page) => page.text.trim().length > 0);
+}
+
+async function extractAllPdfPageTexts(
+  pdfDocument: PdfDocumentLike,
+): Promise<PdfPageText[]> {
+  const pageCount = Number(pdfDocument.numPages ?? 0);
+  const pages: PdfPageText[] = [];
+
+  for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
+    const pdfPage = await pdfDocument.getPage(pageNumber);
+    pages.push({
+      pageNumber,
+      text: await extractPdfPageText(pdfPage),
+    });
+  }
+
+  return pages;
 }
 
 async function getOpenPdfRecognizerPageTexts(
-  ztoolkit: any,
-): Promise<Array<{ pageNumber: number; text: string }>> {
+  ztoolkit: ZToolkitLike,
+): Promise<PdfPageText[]> {
   try {
     const reader = getActiveReader(ztoolkit);
     if (!reader) {
@@ -145,13 +274,15 @@ async function getOpenPdfRecognizerPageTexts(
       return [];
     }
 
-    const recognizerData = await (globalThis as any).Zotero?.PDFWorker?.getRecognizerData?.(
+    const recognizerData = await getZoteroGlobal().PDFWorker?.getRecognizerData?.(
       attachment.id,
       true,
     );
-    const pages = Array.isArray(recognizerData?.pages) ? recognizerData.pages : [];
+    const recognizerPages = Array.isArray(recognizerData?.pages)
+      ? recognizerData.pages
+      : [];
 
-    return pages.map((page: any, index: number) => ({
+    return recognizerPages.map((page, index) => ({
       pageNumber: index + 1,
       text: getRecognizerPageText(page),
     }));
@@ -161,10 +292,9 @@ async function getOpenPdfRecognizerPageTexts(
   }
 }
 
-export async function extractOpenPdfText(ztoolkit: any): Promise<string> {
+export async function extractOpenPdfText(ztoolkit: ZToolkitLike): Promise<string> {
   try {
     const reader = getActiveReader(ztoolkit);
-
     if (!reader) {
       ztoolkit.log("[extractOpenPdfText] No active reader found");
       return "";
@@ -176,7 +306,7 @@ export async function extractOpenPdfText(ztoolkit: any): Promise<string> {
       return "";
     }
 
-    const cachedText = String((await attachment.attachmentText) ?? "").trim();
+    const cachedText = normalizeText(await attachment.attachmentText);
     if (cachedText) {
       ztoolkit.log(
         `[extractOpenPdfText] Extracted ${cachedText.length} characters from attachmentText`,
@@ -184,12 +314,12 @@ export async function extractOpenPdfText(ztoolkit: any): Promise<string> {
       return cachedText;
     }
 
-    const result = await (globalThis as any).Zotero?.PDFWorker?.getFullText?.(
+    const result = await getZoteroGlobal().PDFWorker?.getFullText?.(
       attachment.id,
       null,
       true,
     );
-    const workerText = String(result?.text ?? "").trim();
+    const workerText = normalizeText(result?.text);
 
     ztoolkit.log(
       `[extractOpenPdfText] Extracted ${workerText.length} characters from PDFWorker`,
@@ -201,20 +331,13 @@ export async function extractOpenPdfText(ztoolkit: any): Promise<string> {
   }
 }
 
-export function getCurrentOpenPdfPage(ztoolkit: any): number | null {
-  const reader = getActiveReader(ztoolkit);
-
-  if (!reader) return null;
-
-  const readerWindow = getReaderWindow(reader);
-
-  const wrappedWindow = readerWindow?.wrappedJSObject ?? readerWindow;
-  const pdfApplication = wrappedWindow?.PDFViewerApplication;
-
-  return pdfApplication?.pdfViewer?.currentPageNumber ?? null;
+export function getCurrentOpenPdfPage(ztoolkit: ZToolkitLike): number | null {
+  const currentPage = getPdfViewerApplication(getActiveReader(ztoolkit))?.pdfViewer
+    ?.currentPageNumber;
+  return typeof currentPage === "number" && currentPage > 0 ? currentPage : null;
 }
 
-export async function getOpenPdfPageCount(ztoolkit: any): Promise<number> {
+export async function getOpenPdfPageCount(ztoolkit: ZToolkitLike): Promise<number> {
   try {
     const pdfDocument = await getOpenPdfDocument(ztoolkit);
     const pageCount = Number(pdfDocument?.numPages ?? 0);
@@ -231,7 +354,7 @@ export async function getOpenPdfPageCount(ztoolkit: any): Promise<number> {
 }
 
 export async function extractOpenPdfPageText(
-  ztoolkit: any,
+  ztoolkit: ZToolkitLike,
   pageNumber: number,
 ): Promise<string> {
   try {
@@ -246,15 +369,14 @@ export async function extractOpenPdfPageText(
     if (pdfDocument) {
       const pdfPage = await pdfDocument.getPage(pageNumber);
       const pageText = await extractPdfPageText(pdfPage);
-
       if (pageText) {
         return pageText;
       }
     }
 
-    const recognizerPages = await getOpenPdfRecognizerPageTexts(ztoolkit);
-    const recognizerPageText =
-      recognizerPages.find((page) => page.pageNumber === pageNumber)?.text ?? "";
+    const recognizerPageText = (
+      await getOpenPdfRecognizerPageTexts(ztoolkit)
+    ).find((page) => page.pageNumber === pageNumber)?.text;
 
     if (recognizerPageText) {
       ztoolkit.log(
@@ -281,32 +403,22 @@ export async function extractOpenPdfPageText(
 }
 
 export async function extractOpenPdfAllPageTexts(
-  ztoolkit: any,
-): Promise<Array<{ pageNumber: number; text: string }>> {
+  ztoolkit: ZToolkitLike,
+): Promise<PdfPageText[]> {
   try {
     const pdfDocument = await getOpenPdfDocument(ztoolkit);
     if (pdfDocument) {
-      const pageCount = Number(pdfDocument.numPages ?? 0);
-      const pages: Array<{ pageNumber: number; text: string }> = [];
-
-      for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
-        const pdfPage = await pdfDocument.getPage(pageNumber);
-        pages.push({
-          pageNumber,
-          text: await extractPdfPageText(pdfPage),
-        });
-      }
-
-      if (pages.some((page) => page.text.trim())) {
+      const pdfPages = await extractAllPdfPageTexts(pdfDocument);
+      if (hasNonEmptyPageText(pdfPages)) {
         ztoolkit.log(
-          `[extractOpenPdfAllPageTexts] Extracted text for ${pages.length} page(s) from PDF.js`,
+          `[extractOpenPdfAllPageTexts] Extracted text for ${pdfPages.length} page(s) from PDF.js`,
         );
-        return pages;
+        return pdfPages;
       }
     }
 
     const recognizerPages = await getOpenPdfRecognizerPageTexts(ztoolkit);
-    if (recognizerPages.some((page) => page.text.trim())) {
+    if (hasNonEmptyPageText(recognizerPages)) {
       ztoolkit.log(
         `[extractOpenPdfAllPageTexts] Extracted text for ${recognizerPages.length} page(s) from recognizer fallback`,
       );
