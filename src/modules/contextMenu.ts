@@ -1,4 +1,3 @@
-import { config } from "../../package.json";
 import { openSidebarAndShowChat, setPendingHighlightedSelection } from "./chat";
 
 export class ContextMenu {
@@ -9,8 +8,6 @@ export class ContextMenu {
       ContextMenu.onReaderPopupShow,
       addon.data.config.addonID,
     );
-
-    //ztoolkit.log(`${config.addonRef}: Context menu registered.`);
   }
 
   static onReaderPopupShow(
@@ -21,8 +18,6 @@ export class ContextMenu {
 
     // Selected text
     const selectedText = annotation.text ?? "";
-
-    //ztoolkit.log("Selected text for popup chat:", selectedText);
 
     if (!selectedText) return;
 
@@ -68,7 +63,7 @@ export class ContextMenu {
       askButton.style.borderColor = "#d8d8dc";
     });
 
-    askButton.addEventListener("click", (ev: MouseEvent) => {
+    askButton.addEventListener("click", () => {
       const itemID = reader?.itemID;
       if (!itemID) {
         return;
@@ -92,6 +87,4 @@ export class ContextMenu {
     // Add to popup
     popup.appendChild(askButton);
   }
-
-
 }

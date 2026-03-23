@@ -486,17 +486,6 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
     sendButton.disabled = !input.value.trim();
   };
 
-  // const send = () => {
-  //   const text = input.value.trim();
-  //   if (!text) return;
-  //   chatsByItem[itemID].push({ text, from: "me" });
-  //   // Echo back as if from other party
-  //   chatsByItem[itemID].push({ text, from: "other" });
-  //   input.value = "";
-  //   renderMessages();
-  //   updateSendState();
-  // };
-
   const send = async () => {
     const text = input.value.trim();
     if (!text) return;

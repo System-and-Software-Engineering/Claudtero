@@ -56,7 +56,6 @@ If you are using this repo, I recommended that you put the following badge on yo
 
 - Event-driven, functional programming, under extensive skeleton;
 - Simple and user-friendly, works out-of-the-box.
-- Abundant examples in `src/modules/examples.ts`, covering most of the commonly used APIs in plugins (using [zotero-plugin-toolkit](https://github.com/windingwind/zotero-plugin-toolkit));
 - TypeScript support:
   - Full type definition support for the whole Zotero project, which is written in JavaScript (using [zotero-types](https://github.com/windingwind/zotero-types));
   - Global variables and environment setup;
@@ -65,28 +64,6 @@ If you are using this repo, I recommended that you put the following badge on yo
   - Automatically generate/update plugin id/version, update configrations, and set environment variables (`development` / `production`);
   - Automatically release to GitHub;
 - Prettier and ES Lint integration.
-
-## Examples
-
-This repo provides examples for [zotero-plugin-toolkit](https://github.com/windingwind/zotero-plugin-toolkit) APIs.
-
-Search `@example` in `src/examples.ts`. The examples are called in `src/hooks.ts`.
-
-### Basic Examples
-
-- registerNotifier
-- registerPrefs, unregisterPrefs
-
-### Shortcut Keys Examples
-
-- registerShortcuts
-- exampleShortcutLargerCallback
-- exampleShortcutSmallerCallback
-- exampleShortcutConflictionCallback
-
-### UI Examples
-
-![image](https://user-images.githubusercontent.com/33902321/211739774-cc5c2df8-5fd9-42f0-9cdf-0f2e5946d427.png)
 
 - registerStyleSheet(the official make-it-red example)
 - registerRightClickMenuItem
@@ -401,7 +378,6 @@ This section shows the directory structure of a template.
 |   |-- hooks.ts                  # lifecycle hooks
 |   |-- index.ts                  # main entry
 |   |-- modules                   # sub modules
-|   |   |-- examples.ts
 |   |   `-- preferenceScript.ts
 |   `-- utils                 # utilities
 |       |-- locale.ts
