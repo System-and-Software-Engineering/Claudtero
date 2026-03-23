@@ -1,8 +1,17 @@
+.chat-pane,
+.chat-pane__messages,
+.chat-pane__input-area {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
 .chat-pane {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  min-width: 0;
+  overflow: hidden;
   padding: 8px;
   background: #f7f7f8;
   border: 1px solid #d8d8dc;
@@ -19,6 +28,7 @@
   min-height: 80px;
   max-height: 100%;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 8px;
   background: #ffffff;
   border: 1px solid #d8d8dc;
@@ -26,14 +36,63 @@
 }
 
 .chat-pane__message {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  width: auto;
+  max-width: 90%;
+  overflow: hidden;
   padding: 6px 8px;
   border-radius: 4px;
   line-height: 1.35;
   word-break: break-word;
-  max-width: 90%;
   border: 1px solid #d8d8dc;
   user-select: text;
   cursor: text;
+  box-sizing: border-box;
+}
+
+.chat-pane__message-selection {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  border: 1px solid #d8d8dc;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.chat-pane__message-selection-icon {
+  flex: 0 0 auto;
+  color: #6b7280;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.chat-pane__message-selection-content {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  color: #525866;
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.chat-pane__message-body {
+  min-width: 0;
+  overflow: hidden;
+  max-width: 100%;
 }
 
 .chat-pane__message-content > :first-child {
@@ -100,7 +159,8 @@
 }
 
 .chat-pane__message--me {
-  align-self: flex-end;
+  align-self: flex-start;
+  margin-left: auto;
   background: #eef1f7;
   color: #1f2430;
 }
@@ -129,7 +189,6 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-  min-width: 0;
   padding: 10px;
   border-radius: 4px;
   background: #ffffff;
@@ -355,6 +414,16 @@
   }
   .chat-pane__md-link {
     color: #93c5fd;
+  }
+  .chat-pane__message-selection {
+    border-color: #495163;
+    background: rgba(12, 18, 32, 0.28);
+  }
+  .chat-pane__message-selection-icon {
+    color: #b7c0cf;
+  }
+  .chat-pane__message-selection-content {
+    color: #d5dbe7;
   }
   .chat-pane__empty {
     color: #a3adbe;

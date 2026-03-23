@@ -7,10 +7,50 @@ import { env } from "../config/env";
 import { getPref } from "../utils/prefs";
 
 
-type ChatEntry = { text: string; from: "me" | "other" };
+type ChatEntry = {
+  text: string;
+  from: "me" | "other";
+  selectedText?: string;
+};
 type PendingHighlightedSelection = { text: string; pageNumber: number | null };
 const chatsByItem: Record<number, ChatEntry[]> = {};
 const pendingHighlightedSelectionsByItem: Record<number, PendingHighlightedSelection | undefined> = {};
+
+function formatSelectedText(text: string): string {
+  return `“${text.trim()}”`;
+}
+
+function buildSelectedTextPreview(doc: Document, selectedText: string): HTMLElement {
+  const preview = doc.createElement("div");
+  preview.className = "chat-pane__message-selection";
+
+  const icon = doc.createElement("div");
+  icon.className = "chat-pane__message-selection-icon";
+  icon.textContent = "↩";
+
+  const content = doc.createElement("div");
+  content.className = "chat-pane__message-selection-content";
+  content.textContent = formatSelectedText(selectedText);
+
+  preview.append(icon, content);
+  return preview;
+}
+
+function buildMessageNode(doc: Document, msg: ChatEntry): HTMLElement {
+  const message = doc.createElement("div");
+  message.className = `chat-pane__message chat-pane__message--${msg.from}`;
+
+  if (msg.selectedText?.trim()) {
+    message.appendChild(buildSelectedTextPreview(doc, msg.selectedText));
+  }
+
+  const messageContent = doc.createElement("div");
+  messageContent.className = "chat-pane__message-body";
+  renderMarkdown(messageContent, doc, msg.text);
+  message.appendChild(messageContent);
+
+  return message;
+}
 
 function getRelatedChatItemIDs(itemID: number): number[] {
   const ids = new Set<number>([itemID]);
@@ -305,6 +345,11 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
   body.style.display = "flex";
   body.style.flexDirection = "column";
   body.style.minHeight = "150px"; // give it some space
+  body.style.minWidth = "0";
+  body.style.width = "100%";
+  body.style.maxWidth = "100%";
+  body.style.boxSizing = "border-box";
+  body.style.overflow = "hidden";
 
   if (!item) {
     body.textContent = "Select an item to start chatting.";
@@ -354,10 +399,7 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
       return;
     }
     for (const msg of chatsByItem[itemID]) {
-      const message = doc.createElement("div");
-      message.className = `chat-pane__message chat-pane__message--${msg.from}`;
-      renderMarkdown(message, doc, msg.text);
-      messagesBox.appendChild(message);
+      messagesBox.appendChild(buildMessageNode(doc, msg));
     }
     messagesBox.scrollTop = messagesBox.scrollHeight;
   };
@@ -454,7 +496,7 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
 
     const text = doc.createElement("div");
     text.className = "chat-pane__selection-text";
-    text.textContent = `“${pendingSelection.text}”`;
+  text.textContent = formatSelectedText(pendingSelection.text);
 
     content.append(text);
 
@@ -526,7 +568,11 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
     }
 
     // Show user's message immediately
-    chatsByItem[itemID].push({ text, from: "me" });
+    chatsByItem[itemID].push({
+      text,
+      from: "me",
+      selectedText: pendingSelection?.text?.trim() || undefined,
+    });
     if (pendingSelection) {
       clearPendingHighlightedSelectionForItem(itemID);
       renderHighlightedSelection();
@@ -610,7 +656,7 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
   };
 
   const win = doc.defaultView;
-  win?.addEventListener("resize", handleResize);
+  win?.adentListener("resize", handleResize);
 }
 
 function onUpdateHeight({ body }: { body: HTMLElement }) {
