@@ -2,161 +2,19 @@ import { assert } from "chai";
 import {
   buildDocumentContext,
   buildSinglePageContext,
+  decideContextMode,
   type ContextModeDecision,
 } from "../src/modules/chat/documentContext";
+import { getCurrentOpenPdfPage } from "../src/modules/pdf/getPdfText";
 import {
-  getCurrentOpenPdfPage,
-  type ZToolkitLike,
-} from "../src/modules/pdf/getPdfText";
-
-type ZoteroGlobalSnapshot = {
-  Reader: unknown;
-  Items: unknown;
-  PDFWorker: unknown;
-};
-
-type TestContextOptions = {
-  currentPage?: number;
-  pageTexts?: string[];
-  attachmentText?: string;
-  malformedPageNumbers?: number[];
-  wrappedPageNumbers?: number[];
-};
-
-type RetrievalMetrics = {
-  requestedPages: number[];
-  fullTextCalls: number;
-  recognizerCalls: number;
-};
-
-function createZtoolkitMock(): ZToolkitLike {
-  return {
-    getGlobal(name: string): unknown {
-      if (name === "Zotero_Tabs") {
-        return { selectedID: "reader-tab" };
-      }
-      return undefined;
-    },
-    log(): void {
-      // Ignore logs in unit tests.
-    },
-  };
-}
-
-function buildTextContentItems(text: string) {
-  if (!text) {
-    return [];
-  }
-
-  return [{ str: text, hasEOL: false }];
-}
-
-function createPdfDocument(pageTexts: string[], metrics: RetrievalMetrics) {
-  return createPdfDocumentWithOptions(pageTexts, metrics, []);
-}
-
-function createPdfDocumentWithOptions(
-  pageTexts: string[],
-  metrics: RetrievalMetrics,
-  malformedPageNumbers: number[],
-  wrappedPageNumbers: number[] = [],
-) {
-  return {
-    numPages: pageTexts.length,
-    async getPage(pageNumber: number) {
-      metrics.requestedPages.push(pageNumber);
-      if (malformedPageNumbers.includes(pageNumber)) {
-        return {};
-      }
-
-      const text = pageTexts[pageNumber - 1] ?? "";
-      const page = {
-        async getTextContent() {
-          return {
-            items: buildTextContentItems(text),
-          };
-        },
-        cleanup() {
-          // No-op in tests.
-        },
-      };
-
-      if (wrappedPageNumbers.includes(pageNumber)) {
-        return { wrappedJSObject: page };
-      }
-
-      return page;
-    },
-  };
-}
-
-function installPdfContext(options: TestContextOptions): RetrievalMetrics {
-  const metrics: RetrievalMetrics = {
-    requestedPages: [],
-    fullTextCalls: 0,
-    recognizerCalls: 0,
-  };
-
-  const zoteroGlobal = globalThis.Zotero as {
-    Reader?: { getByTabID?: (tabId: unknown) => unknown };
-    Items?: { getAsync?: (itemID: number) => Promise<unknown> };
-    PDFWorker?: {
-      getRecognizerData?: (itemID: number, includeText: boolean) => Promise<unknown>;
-      getFullText?: (
-        itemID: number,
-        unused: unknown,
-        includeText: boolean,
-      ) => Promise<unknown>;
-    };
-  };
-
-  const pdfDocument = options.pageTexts
-    ? createPdfDocumentWithOptions(
-        options.pageTexts,
-        metrics,
-        options.malformedPageNumbers ?? [],
-        options.wrappedPageNumbers ?? [],
-      )
-    : null;
-
-  zoteroGlobal.Reader = {
-    getByTabID: (_tabId: unknown) => ({
-      itemID: 1,
-      _iframeWindow: {
-        wrappedJSObject: {
-          PDFViewerApplication: {
-            initializedPromise: Promise.resolve(),
-            pdfDocument,
-            pdfViewer: {
-              pdfDocument,
-              currentPageNumber: options.currentPage ?? 1,
-            },
-          },
-        },
-      },
-    }),
-  };
-
-  zoteroGlobal.Items = {
-    getAsync: async (_itemID: number) => ({
-      id: 1,
-      attachmentText: options.attachmentText ?? "",
-    }),
-  };
-
-  zoteroGlobal.PDFWorker = {
-    getRecognizerData: async () => {
-      metrics.recognizerCalls += 1;
-      return { pages: [] };
-    },
-    getFullText: async () => {
-      metrics.fullTextCalls += 1;
-      return { text: options.attachmentText ?? "" };
-    },
-  };
-
-  return metrics;
-}
+  createFetchResponse,
+  createZtoolkitMock,
+  installPdfContext,
+  restoreTestGlobals,
+  snapshotTestGlobals,
+  type TestContextOptions,
+  type TestGlobalsSnapshot,
+} from "./helpers/testSupport";
 
 async function buildContext(
   decision: ContextModeDecision,
@@ -177,32 +35,14 @@ async function buildContext(
 }
 
 describe("document context retrieval", function () {
-  let snapshot: ZoteroGlobalSnapshot;
+  let snapshot: TestGlobalsSnapshot;
 
   beforeEach(function () {
-    const zoteroGlobal = globalThis.Zotero as {
-      Reader?: unknown;
-      Items?: unknown;
-      PDFWorker?: unknown;
-    };
-
-    snapshot = {
-      Reader: zoteroGlobal.Reader,
-      Items: zoteroGlobal.Items,
-      PDFWorker: zoteroGlobal.PDFWorker,
-    };
+    snapshot = snapshotTestGlobals();
   });
 
   afterEach(function () {
-    const zoteroGlobal = globalThis.Zotero as {
-      Reader?: unknown;
-      Items?: unknown;
-      PDFWorker?: unknown;
-    };
-
-    zoteroGlobal.Reader = snapshot.Reader;
-    zoteroGlobal.Items = snapshot.Items;
-    zoteroGlobal.PDFWorker = snapshot.PDFWorker;
+    restoreTestGlobals(snapshot);
   });
 
   it("retrieves the current page window with neighboring pages", async function () {
@@ -296,21 +136,31 @@ describe("document context retrieval", function () {
     );
   });
 
-  it("does not approximate selected-page context from whole-document text", async function () {
-    const metrics = installPdfContext({
-      currentPage: 2,
-      pageTexts: ["", "", ""],
-      attachmentText: "Whole-document text that must not be reused as page 2.",
-    });
+  it("falls back from empty page-window extraction to whole-document context", async function () {
+    const { result } = await buildContext(
+      {
+        mode: "page_window",
+        reason: "Current-page question",
+        keywords: [],
+      },
+      {
+        currentPage: 2,
+        pageTexts: ["", "", ""],
+        attachmentText:
+          "Whole paper text covering introduction, methods, and results.",
+      },
+      "Explain this page.",
+    );
 
-    const context = await buildSinglePageContext({
-      ztoolkit: createZtoolkitMock(),
-      pageNumber: 2,
-    });
-
-    assert.strictEqual(context, "");
-    assert.deepEqual(metrics.requestedPages, [2, 1, 2, 3]);
-    assert.strictEqual(metrics.fullTextCalls, 0);
+    assert.strictEqual(result.appliedMode, "whole_document");
+    assert.include(
+      result.fallbackReason ?? "",
+      "Requested page_window but used whole_document",
+    );
+    assert.include(
+      result.context,
+      "Whole paper text covering introduction, methods, and results.",
+    );
   });
 
   it("falls back cleanly when a page object lacks getTextContent", async function () {
@@ -318,26 +168,12 @@ describe("document context retrieval", function () {
       currentPage: 1,
       pageTexts: ["", "Recognized page 2 text", ""],
       malformedPageNumbers: [2],
+      recognizerPages: [
+        { text: "" },
+        { text: "Recognizer fallback text for page 2." },
+        { text: "" },
+      ],
     });
-
-    const zoteroGlobal = globalThis.Zotero as {
-      PDFWorker?: {
-        getRecognizerData?: (itemID: number, includeText: boolean) => Promise<unknown>;
-      };
-    };
-
-    zoteroGlobal.PDFWorker = {
-      getRecognizerData: async () => {
-        metrics.recognizerCalls += 1;
-        return {
-          pages: [
-            { text: "" },
-            { text: "Recognizer fallback text for page 2." },
-            { text: "" },
-          ],
-        };
-      },
-    };
 
     const context = await buildSinglePageContext({
       ztoolkit: createZtoolkitMock(),
@@ -367,53 +203,90 @@ describe("document context retrieval", function () {
   });
 
   it("resolves the current page from the current page label", function () {
-    const zoteroGlobal = globalThis.Zotero as {
-      Reader?: { getByTabID?: (tabId: unknown) => unknown };
-    };
-
-    zoteroGlobal.Reader = {
-      getByTabID: (_tabId: unknown) => ({
-        _iframeWindow: {
-          wrappedJSObject: {
-            PDFViewerApplication: {
-              pdfViewer: {
-                currentPageNumber: 1,
-                currentPageLabel: "8",
-                pageLabelToPageNumber(label: string) {
-                  return label === "8" ? 5 : 1;
-                },
-              },
-            },
-          },
-        },
-      }),
-    };
+    installPdfContext({
+      currentPage: 1,
+      currentPageLabel: "8",
+      pageLabelMap: { "8": 5 },
+      pageTexts: ["i", "ii", "1", "2", "3"],
+    });
 
     const currentPage = getCurrentOpenPdfPage(createZtoolkitMock());
     assert.strictEqual(currentPage, 5);
   });
 
   it("falls back to the internal current page number when needed", function () {
-    const zoteroGlobal = globalThis.Zotero as {
-      Reader?: { getByTabID?: (tabId: unknown) => unknown };
-    };
-
-    zoteroGlobal.Reader = {
-      getByTabID: (_tabId: unknown) => ({
-        _iframeWindow: {
-          wrappedJSObject: {
-            PDFViewerApplication: {
-              pdfViewer: {
-                currentPageNumber: null,
-                _currentPageNumber: 4,
-              },
-            },
-          },
-        },
-      }),
-    };
+    installPdfContext({
+      currentPage: null,
+      internalCurrentPage: 4,
+      pageTexts: ["Page 1", "Page 2", "Page 3", "Page 4"],
+    });
 
     const currentPage = getCurrentOpenPdfPage(createZtoolkitMock());
     assert.strictEqual(currentPage, 4);
+  });
+
+  it("uses heuristic fallback when the routing model returns invalid JSON", async function () {
+    globalThis.fetch = async () =>
+      createFetchResponse({
+        jsonData: {
+          choices: [{ message: { content: "not valid json" } }],
+        },
+      });
+
+    const decision = await decideContextMode({
+      provider: "goethe",
+      apiKey: "secret",
+      model: "router-model",
+      userText: "Summarize the paper.",
+    });
+
+    assert.deepEqual(decision, {
+      mode: "whole_document",
+      reason: "The question asks for a document-level overview.",
+      keywords: ["summarize", "the", "paper"],
+    });
+  });
+
+  it("overrides router output when the user explicitly asks about the current page", async function () {
+    globalThis.fetch = async () =>
+      createFetchResponse({
+        jsonData: {
+          choices: [
+            {
+              message: {
+                content:
+                  '{"mode":"whole_document","reason":"summary","keywords":["summary"]}',
+              },
+            },
+          ],
+        },
+      });
+
+    const decision = await decideContextMode({
+      provider: "goethe",
+      apiKey: "secret",
+      model: "router-model",
+      userText: "Summarize this page for me.",
+    });
+
+    assert.strictEqual(decision.mode, "page_window");
+    assert.include(decision.reason, "explicitly asked about the current page");
+  });
+
+  it("falls back to BM25 lookup when the router call fails for a search-style query", async function () {
+    globalThis.fetch = async () => {
+      throw new Error("router unavailable");
+    };
+
+    const decision = await decideContextMode({
+      provider: "goethe",
+      apiKey: "secret",
+      model: "router-model",
+      userText: "Where is transformer attention discussed?",
+    });
+
+    assert.strictEqual(decision.mode, "bm25_window");
+    assert.include(decision.reason, "topic lookup");
+    assert.include(decision.keywords, "transformer");
   });
 });
