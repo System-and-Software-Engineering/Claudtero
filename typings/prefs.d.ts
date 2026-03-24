@@ -10,14 +10,8 @@ declare namespace _ZoteroTypes {
       "llmProvider": string;
       "localPort": string;
       "ollamaModel": string;
-      "openaiApiKey": string;
-      "openaiModel": string;
-      "openaiTemp": string;
-      "openaiPrompt": string;
       "goetheApiKey": string;
       "goetheModel": string;
-      "goetheTemp": string;
-      "goethePrompt": string;
     };
   }
 }

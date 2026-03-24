@@ -4,12 +4,6 @@
     .llm-settings {
       margin-top: 16px;
     }
-    textarea.llm-prompt {
-      min-height: 150px;
-      max-height: 400px;
-      resize: vertical;
-      overflow: auto;
-    }
   </html:style>
 </linkset>
 <groupbox
@@ -31,49 +25,6 @@
       id="zotero-prefpane-__addonRef__-local-port"
       preference="localPort"
     ></html:input>
-    <html:label
-      for="zotero-prefpane-__addonRef__-ollama-model"
-      data-l10n-id="pref-model"
-    ></html:label>
-    <box id="__addonRef__-ollama-model-placeholder"></box>
-    <html:div id="__addonRef__-ollama-model-status"></html:div>
-  </vbox>
-  <vbox id="__addonRef__-openai-settings" class="llm-settings" hidden="true">
-    <html:label
-      for="zotero-prefpane-__addonRef__-openai-api-key"
-      data-l10n-id="pref-api-key"
-    ></html:label>
-    <html:input
-      type="password"
-      id="zotero-prefpane-__addonRef__-openai-api-key"
-      preference="openaiApiKey"
-    ></html:input>
-    <html:label
-      for="zotero-prefpane-__addonRef__-openai-model"
-      data-l10n-id="pref-model"
-    ></html:label>
-    <box id="__addonRef__-openai-model-placeholder"></box>
-    <html:label
-      for="zotero-prefpane-__addonRef__-openai-temp"
-      data-l10n-id="pref-temp"
-    ></html:label>
-    <html:input
-      type="number"
-      id="zotero-prefpane-__addonRef__-openai-temp"
-      preference="openaiTemp"
-      min="0"
-      max="2"
-      step="0.1"
-    ></html:input>
-    <html:label
-      for="zotero-prefpane-__addonRef__-openai-prompt"
-      data-l10n-id="pref-prompt"
-    ></html:label>
-    <html:textarea
-      id="zotero-prefpane-__addonRef__-openai-prompt"
-      class="llm-prompt"
-      preference="openaiPrompt"
-    ></html:textarea>
   </vbox>
   <vbox id="__addonRef__-goethe-settings" class="llm-settings" hidden="true">
     <html:label
@@ -85,32 +36,5 @@
       id="zotero-prefpane-__addonRef__-goethe-api-key"
       preference="goetheApiKey"
     ></html:input>
-    <html:label
-      for="zotero-prefpane-__addonRef__-goethe-model"
-      data-l10n-id="pref-model"
-    ></html:label>
-    <box id="__addonRef__-goethe-model-placeholder"></box>
-    <html:div id="__addonRef__-goethe-model-status"></html:div>
-    <html:label
-      for="zotero-prefpane-__addonRef__-goethe-temp"
-      data-l10n-id="pref-temp"
-    ></html:label>
-    <html:input
-      type="number"
-      id="zotero-prefpane-__addonRef__-goethe-temp"
-      preference="goetheTemp"
-      min="0"
-      max="2"
-      step="0.1"
-    ></html:input>
-    <html:label
-      for="zotero-prefpane-__addonRef__-goethe-prompt"
-      data-l10n-id="pref-prompt"
-    ></html:label>
-    <html:textarea
-      id="zotero-prefpane-__addonRef__-goethe-prompt"
-      class="llm-prompt"
-      preference="goethePrompt"
-    ></html:textarea>
   </vbox>
 </groupbox>

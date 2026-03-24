@@ -1,4 +1,3 @@
-import { getDevKeys } from "../ai/keys";
 import { sendChatCompletions, type ChatMessage } from "../ai/chatClient";
 import {
     getModelCatalog,
@@ -48,21 +47,12 @@ interface ResolvedProviderSettings {
     systemPrompt: string;
 }
 
-function parseTemperature(value: unknown, fallback = 0.2): number {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : fallback;
-}
-
 function getTrimmedPref(
     key:
         | "localPort"
         | "ollamaModel"
-        | "openaiApiKey"
-        | "openaiModel"
-        | "openaiPrompt"
         | "goetheApiKey"
-        | "goetheModel"
-        | "goethePrompt",
+        | "goetheModel",
 ): string {
     return String(getPref(key) ?? "").trim();
 }
@@ -113,7 +103,6 @@ function resolveProviderSettings(
     provider: AIProvider,
     requestedModel: string,
 ): ResolvedProviderSettings {
-    const keys = getDevKeys();
     const requestedModelId = requestedModel.trim();
 
     switch (provider) {
@@ -124,31 +113,13 @@ function resolveProviderSettings(
                 temperature: 0.2,
                 systemPrompt: DEFAULT_SYSTEM_PROMPT,
             };
-        case "openai": {
-            const configuredPrompt = getTrimmedPref("openaiPrompt");
-            return {
-                apiKey: getTrimmedPref("openaiApiKey") || keys.openai,
-                model: requestedModelId || getTrimmedPref("openaiModel") || "gpt-4o",
-                temperature: parseTemperature(getPref("openaiTemp"), 0.2),
-                systemPrompt: configuredPrompt || DEFAULT_SYSTEM_PROMPT,
-            };
-        }
-        case "openrouter":
-            return {
-                apiKey: keys.openrouter,
-                model: requestedModelId || "anthropic/claude-3.5-sonnet",
-                temperature: 0.2,
-                systemPrompt: DEFAULT_SYSTEM_PROMPT,
-            };
-        case "goethe": {
-            const configuredPrompt = getTrimmedPref("goethePrompt");
+        case "goethe":
             return {
                 apiKey: getTrimmedPref("goetheApiKey"),
                 model: requestedModelId || getTrimmedPref("goetheModel"),
-                temperature: parseTemperature(getPref("goetheTemp"), 0.2),
-                systemPrompt: configuredPrompt || DEFAULT_SYSTEM_PROMPT,
+                temperature: 0.2,
+                systemPrompt: DEFAULT_SYSTEM_PROMPT,
             };
-        }
         default:
             throw new Error(`Unsupported AI provider: ${provider}`);
     }

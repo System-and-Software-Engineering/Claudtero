@@ -10,8 +10,6 @@ import { getPref } from "../../utils/prefs";
  * which provider is used.
  *
  * Supported endpoints:
- * - OpenAI:     POST https://api.openai.com/v1/chat/completions
- * - OpenRouter: POST https://openrouter.ai/api/v1/chat/completions
  * - Goethe Uni: POST https://litellm.s.studiumdigitale.uni-frankfurt.de/v1/chat/completions
  *
  * NOTE:
@@ -65,10 +63,6 @@ function getBaseUrl(provider: AIProvider): string {
     switch (provider) {
         case "ollama":
             throw new Error("Ollama uses the native local API and does not expose an OpenAI-compatible base URL here.");
-        case "openai":
-            return "https://api.openai.com/v1";
-        case "openrouter":
-            return "https://openrouter.ai/api/v1";
         case "goethe":
             return "https://litellm.s.studiumdigitale.uni-frankfurt.de/v1";
         default:
@@ -89,16 +83,6 @@ function buildHeaders(
         "Content-Type": "application/json",
     };
 
-    /**
-   * OpenRouter recommends setting these headers so they can
-   * attribute traffic and display of the app name in dashboards.
-   * They are optional and safe to include.
-   */
-    if (provider === "openrouter") {
-        headers["HTTP-Referer"] = "https://github.com/System-and-Software-Engineering/Claudtero";
-        headers["X-Title"] = "Claudtero - Zotero AI Assistant";
-    }
-
     return headers;
 }
 
@@ -107,7 +91,7 @@ function buildHeaders(
 /* ------------------------------------------------------------------ */
 
 /**
- * Send a chat completion request to OpenAI or OpenRouter.
+ * Send a chat completion request to a remote OpenAI-compatible provider.
  *
  * This function:
  * 1. Builds the provider-specific endpoint

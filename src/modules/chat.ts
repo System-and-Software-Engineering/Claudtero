@@ -116,12 +116,10 @@ function normalizeProviderPreference(value: string): AIProvider {
 
 function getModelPreferenceKey(
   provider: AIProvider,
-): "ollamaModel" | "openaiModel" | "goetheModel" | null {
+): "ollamaModel" | "goetheModel" | null {
   switch (provider) {
     case "ollama":
       return "ollamaModel";
-    case "openai":
-      return "openaiModel";
     case "goethe":
       return "goetheModel";
     default:
@@ -516,14 +514,11 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
     setPref("llmProvider", provider);
 
     const savedOllamaModel = String(getPref("ollamaModel") ?? "").trim();
-    const savedOpenAiModel = String(getPref("openaiModel") ?? "").trim();
     const savedGoetheModel = String(getPref("goetheModel") ?? "").trim();
     const preferredValue =
       provider === "ollama"
         ? savedOllamaModel
-        : provider === "openai"
-          ? savedOpenAiModel
-          : provider === "goethe"
+        : provider === "goethe"
             ? savedGoetheModel
             : modelSelect.value;
 
