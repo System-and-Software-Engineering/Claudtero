@@ -2,6 +2,7 @@ import { config } from "../../package.json";
 import { getString } from "../utils/locale";
 import { getModelCatalog, type AIProvider, type ModelOption } from "./ai/modelCatalog";
 import { fetchOllamaRunningModels } from "./ai/ollama";
+import { clearGoetheModelsCache, fetchGoetheModels } from "./ai/goethe";
 import { getPref, setPref } from "../utils/prefs";
 
 type LlmProviderPreference = AIProvider | "local";
@@ -13,8 +14,6 @@ const LLM_OPTIONS = [
   { label: "Goethe Uni", value: "goethe" },
 ] as const satisfies ReadonlyArray<{ label: string; value: LlmProviderPreference }>;
 
-const GOETHE_MODELS_URL =
-  "https://litellm.s.studiumdigitale.uni-frankfurt.de/v1/models";
 const OLLAMA_ENTER_PORT_MESSAGE = "Enter your Ollama port to load running models";
 const OLLAMA_NONE_RUNNING_MESSAGE = "No running Ollama models found";
 const PREFERENCES_PANE_ID = `zotero-prefpane-${config.addonRef}`;
@@ -29,12 +28,6 @@ type PreferencePaneRegistry = typeof Zotero.PreferencePanes & {
   unregister?: (id: string) => void;
 };
 
-let goetheModelsCache:
-  | {
-      apiKey: string;
-      models: ModelOption[];
-    }
-  | undefined;
 let goetheFetchToken = 0;
 let ollamaModelsCache:
   | {
@@ -458,50 +451,6 @@ function getGoetheModelFallbackOptions(savedValue: string, label: string): Model
   return [{ label, value: "" }];
 }
 
-async function fetchGoetheModels(apiKey: string): Promise<ModelOption[]> {
-  const trimmedApiKey = apiKey.trim();
-  if (!trimmedApiKey) {
-    return [];
-  }
-
-  if (goetheModelsCache?.apiKey === trimmedApiKey) {
-    return goetheModelsCache.models;
-  }
-
-  const response = await fetch(GOETHE_MODELS_URL, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${trimmedApiKey}`,
-      "Content-Type": "application/json",
-    },
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => "");
-    throw new Error(
-      `Model fetch failed ${response.status} ${response.statusText}${
-        errorText ? `: ${errorText}` : ""
-      }`,
-    );
-  }
-
-  const data = (await response.json()) as {
-    data?: Array<{ id?: string; owned_by?: string }>;
-  };
-
-  const models = (data.data ?? [])
-    .map((entry) => String(entry.id ?? "").trim())
-    .filter(Boolean)
-    .sort((left, right) => left.localeCompare(right))
-    .map((id) => ({ label: id, value: id }));
-
-  goetheModelsCache = {
-    apiKey: trimmedApiKey,
-    models,
-  };
-  return models;
-}
-
 async function renderGoetheModelSelect(forceRefresh = false) {
   const doc = getPrefsDocument();
   const mount = getGoetheModelMount();
@@ -536,7 +485,7 @@ async function renderGoetheModelSelect(forceRefresh = false) {
   }
 
   if (forceRefresh) {
-    goetheModelsCache = undefined;
+    clearGoetheModelsCache();
   }
 
   const token = ++goetheFetchToken;

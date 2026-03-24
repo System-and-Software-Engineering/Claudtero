@@ -4,8 +4,9 @@ import { getAvailableModels, handlePreparedChatSend, prepareChatRequest } from "
 import type { AIProvider } from "./ai/modelCatalog";
 import { renderMarkdown } from "./chat/markdown";
 import { env } from "../config/env";
-import { getPref } from "../utils/prefs";
+import { getPref, setPref } from "../utils/prefs";
 import { fetchOllamaRunningModels } from "./ai/ollama";
+import { fetchGoetheModels } from "./ai/goethe";
 
 
 type ChatEntry = {
@@ -111,6 +112,21 @@ let currentBody: HTMLElement | null = null;
 
 function normalizeProviderPreference(value: string): AIProvider {
   return value === "local" ? "ollama" : (value as AIProvider);
+}
+
+function getModelPreferenceKey(
+  provider: AIProvider,
+): "ollamaModel" | "openaiModel" | "goetheModel" | null {
+  switch (provider) {
+    case "ollama":
+      return "ollamaModel";
+    case "openai":
+      return "openaiModel";
+    case "goethe":
+      return "goetheModel";
+    default:
+      return null;
+  }
 }
 
 /**
@@ -445,6 +461,23 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
   const modelSelect = doc.createElement("select");
   modelSelect.className = "chat-pane__model-select";
 
+  const controlsRow = doc.createElement("div");
+  controlsRow.className = "chat-pane__controls";
+
+  const providerField = doc.createElement("label");
+  providerField.className = "chat-pane__control";
+
+  const providerLabel = doc.createElement("span");
+  providerLabel.className = "chat-pane__control-label";
+  providerLabel.textContent = "Provider";
+
+  const modelField = doc.createElement("label");
+  modelField.className = "chat-pane__control chat-pane__control--grow";
+
+  const modelLabel = doc.createElement("span");
+  modelLabel.className = "chat-pane__control-label";
+  modelLabel.textContent = "Model";
+
   /**
    * Helper: rebuild the model select based on the chosen provider
    */
@@ -465,6 +498,13 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
       (preferredValue && options.some((option) => option.value === preferredValue)
         ? preferredValue
         : options.find((option) => option.value)?.value) ?? "";
+
+    const selectedModelPreferenceKey = getModelPreferenceKey(
+      providerSelect.value as AIProvider,
+    );
+    if (selectedModelPreferenceKey && modelSelect.value) {
+      setPref(selectedModelPreferenceKey, modelSelect.value);
+    }
   };
 
   let modelRefreshToken = 0;
@@ -472,6 +512,8 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
   const renderModelsForProvider = async (provider: AIProvider) => {
     const entry = providers.find((p) => p.provider === provider);
     if (!entry) return;
+
+    setPref("llmProvider", provider);
 
     const savedOllamaModel = String(getPref("ollamaModel") ?? "").trim();
     const savedOpenAiModel = String(getPref("openaiModel") ?? "").trim();
@@ -489,6 +531,62 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
     applyModelOptions(entry.models, preferredValue);
 
     if (provider !== "ollama") {
+      if (provider !== "goethe") {
+        return;
+      }
+
+      const apiKey = String(getPref("goetheApiKey") ?? "").trim();
+      const token = ++modelRefreshToken;
+
+      if (!apiKey) {
+        modelSelect.disabled = true;
+        applyModelOptions(
+          [{ label: "Configure the Goethe API key in Preferences", value: "" }],
+          "",
+        );
+        return;
+      }
+
+      modelSelect.disabled = true;
+      applyModelOptions(
+        [{ label: "Loading Goethe Uni models...", value: savedGoetheModel }],
+        savedGoetheModel,
+      );
+
+      try {
+        const models = await fetchGoetheModels(apiKey);
+        if (token !== modelRefreshToken || providerSelect.value !== provider) {
+          return;
+        }
+
+        if (!models.length) {
+          modelSelect.disabled = true;
+          applyModelOptions(
+            [{ label: "No Goethe Uni models found", value: "" }],
+            "",
+          );
+          return;
+        }
+
+        modelSelect.disabled = false;
+        applyModelOptions(models, preferredValue);
+      } catch (error) {
+        if (token !== modelRefreshToken || providerSelect.value !== provider) {
+          return;
+        }
+
+        modelSelect.disabled = true;
+        applyModelOptions(
+          [
+            {
+              label: `Failed to load Goethe Uni models: ${error instanceof Error ? error.message : String(error)}`,
+              value: "",
+            },
+          ],
+          "",
+        );
+      }
+
       return;
     }
 
@@ -567,6 +665,13 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
   // Update models when provider changes
   providerSelect.addEventListener("change", () => {
     void renderModelsForProvider(providerSelect.value as AIProvider);
+  });
+
+  modelSelect.addEventListener("change", () => {
+    const preferenceKey = getModelPreferenceKey(providerSelect.value as AIProvider);
+    if (preferenceKey) {
+      setPref(preferenceKey, modelSelect.value);
+    }
   });
 
   // Inner wrapper for input + send icon
@@ -743,12 +848,15 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
   renderHighlightedSelection();
 
   // Build hierarchy: input wrapper contains input + send button
-  inputWrapper.appendChild(providerSelect);
-  inputWrapper.appendChild(modelSelect);
+  providerField.append(providerLabel, providerSelect);
+  modelField.append(modelLabel, modelSelect);
+  controlsRow.append(providerField, modelField);
+
   inputWrapper.appendChild(sendButton);
 
   // Input area contains input wrapper, then model select below
   inputArea.appendChild(highlightedSelectionBox);
+  inputArea.appendChild(controlsRow);
   inputArea.appendChild(input);
   inputArea.appendChild(inputWrapper);
 
