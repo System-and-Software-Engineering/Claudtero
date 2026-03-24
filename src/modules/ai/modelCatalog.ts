@@ -14,7 +14,7 @@ import { getPref } from "../../utils/prefs";
  * Supported AI providers.
  * Extend this union when adding new providers.
  */
-export type AIProvider = "openai" | "openrouter" | "goethe";
+export type AIProvider = "ollama" | "openai" | "openrouter" | "goethe";
 
 export interface ModelOption {
   /** Human-friendly label shown in UI */
@@ -45,9 +45,20 @@ function buildConfiguredModelOption(
 export function getModelCatalog(): ModelCatalog {
   const configuredOpenAIModel = String(getPref("openaiModel") ?? "");
   const configuredGoetheModel = String(getPref("goetheModel") ?? "");
+  const configuredOllamaModel = String(getPref("ollamaModel") ?? "");
 
   return {
     providers: [
+      {
+        provider: "ollama",
+        label: "Ollama",
+        models: [
+          buildConfiguredModelOption(
+            configuredOllamaModel,
+            "Configured in Preferences",
+          ),
+        ],
+      },
       {
         provider: "openai",
         label: "OpenAI",

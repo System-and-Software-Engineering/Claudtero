@@ -1,19 +1,33 @@
 import { config } from "../../package.json";
 import { getString } from "../utils/locale";
 import { getModelCatalog, type AIProvider, type ModelOption } from "./ai/modelCatalog";
+import { fetchOllamaRunningModels } from "./ai/ollama";
 import { getPref, setPref } from "../utils/prefs";
 
-type LlmProviderPreference = "local" | AIProvider;
-type ModelPreferenceKey = "openaiModel" | "goetheModel";
+type LlmProviderPreference = AIProvider | "local";
+type ModelPreferenceKey = "openaiModel" | "goetheModel" | "ollamaModel";
 
 const LLM_OPTIONS = [
-  { label: "Local", value: "local" },
+  { label: "Ollama", value: "ollama" },
   { label: "OpenAI", value: "openai" },
   { label: "Goethe Uni", value: "goethe" },
 ] as const satisfies ReadonlyArray<{ label: string; value: LlmProviderPreference }>;
 
 const GOETHE_MODELS_URL =
   "https://litellm.s.studiumdigitale.uni-frankfurt.de/v1/models";
+const OLLAMA_ENTER_PORT_MESSAGE = "Enter your Ollama port to load running models";
+const OLLAMA_NONE_RUNNING_MESSAGE = "No running Ollama models found";
+const PREFERENCES_PANE_ID = `zotero-prefpane-${config.addonRef}`;
+
+type PreferencePaneEntry = {
+  id?: string;
+  pluginID?: string;
+};
+
+type PreferencePaneRegistry = typeof Zotero.PreferencePanes & {
+  pluginPanes?: PreferencePaneEntry[];
+  unregister?: (id: string) => void;
+};
 
 let goetheModelsCache:
   | {
@@ -22,10 +36,36 @@ let goetheModelsCache:
     }
   | undefined;
 let goetheFetchToken = 0;
+let ollamaModelsCache:
+  | {
+      port: string;
+      models: ModelOption[];
+    }
+  | undefined;
+let ollamaFetchToken = 0;
 
 export function registerPrefs() {
-  Zotero.PreferencePanes.register({
-    pluginID: addon.data.config.addonID,
+  const preferencePanes = Zotero.PreferencePanes as PreferencePaneRegistry;
+  const pluginID = addon.data.config.addonID;
+  const existingPluginPanes = (preferencePanes.pluginPanes ?? []).filter(
+    (pane) => pane.pluginID === pluginID,
+  );
+
+  for (const pane of existingPluginPanes) {
+    if (pane.id && pane.id !== PREFERENCES_PANE_ID) {
+      preferencePanes.unregister?.(pane.id);
+    }
+  }
+
+  if (
+    existingPluginPanes.some((pane) => pane.id === PREFERENCES_PANE_ID)
+  ) {
+    return;
+  }
+
+  void Zotero.PreferencePanes.register({
+    id: PREFERENCES_PANE_ID,
+    pluginID,
     src: rootURI + "content/preferences.xhtml",
     label: getString("prefs-title"),
     image: `chrome://${addon.data.config.addonRef}/content/icons/ai-icon.svg`,
@@ -54,13 +94,28 @@ function getPrefsDocument(): Document {
 }
 
 function getStringPref(
-  key: "llmProvider" | "openaiModel" | "goetheModel" | "goetheApiKey",
+  key:
+    | "llmProvider"
+    | "localPort"
+    | "ollamaModel"
+    | "openaiModel"
+    | "goetheModel"
+    | "goetheApiKey",
 ): string {
   return String(getPref(key) ?? "").trim();
 }
 
+function normalizeProviderPreference(value: string): AIProvider {
+  return value === "local" ? "ollama" : (value as AIProvider);
+}
+
 async function bindPrefEvents() {
   const doc = getPrefsDocument();
+  const savedProvider = normalizeProviderPreference(getStringPref("llmProvider") || "ollama");
+
+  if (savedProvider !== getStringPref("llmProvider")) {
+    setPref("llmProvider", savedProvider);
+  }
 
   const providerBoxId = `${config.addonRef}-llm-provider-placeholder`;
   const providerBox = doc.getElementById(providerBoxId);
@@ -71,7 +126,7 @@ async function bindPrefEvents() {
         tag: "menulist",
         id: `zotero-prefpane-${config.addonRef}-llm-provider`,
         attributes: {
-          value: getStringPref("llmProvider") || LLM_OPTIONS[0].value,
+          value: savedProvider,
           native: "true",
           preference: "llmProvider",
         },
@@ -100,6 +155,8 @@ async function bindPrefEvents() {
     );
   }
 
+  attachOllamaPortListeners();
+  await renderOllamaModelSelect();
   renderOpenAIModelSelect();
   attachGoetheApiKeyListeners();
   await renderGoetheModelSelect();
@@ -176,6 +233,181 @@ function renderOpenAIModelSelect() {
 
   if (!value && selectedValue) {
     setPref("openaiModel", selectedValue);
+  }
+}
+
+function attachOllamaPortListeners() {
+  const doc = getPrefsDocument();
+  const portInput = doc.getElementById(
+    `zotero-prefpane-${config.addonRef}-local-port`,
+  ) as HTMLInputElement | null;
+
+  if (!portInput || portInput.dataset.modelsBound === "true") {
+    return;
+  }
+
+  const refreshModels = async () => {
+    await renderOllamaModelSelect(true);
+  };
+
+  portInput.addEventListener("change", refreshModels);
+  portInput.addEventListener("blur", refreshModels);
+  portInput.dataset.modelsBound = "true";
+}
+
+function getOllamaModelStatusElement() {
+  return getPrefsDocument().getElementById(
+    `${config.addonRef}-ollama-model-status`,
+  ) as HTMLElement | null;
+}
+
+function getOllamaModelMount() {
+  const doc = getPrefsDocument();
+  return (
+    doc.getElementById(`zotero-prefpane-${config.addonRef}-ollama-model`) ??
+    doc.getElementById(`${config.addonRef}-ollama-model-placeholder`)
+  );
+}
+
+function setOllamaModelStatus(message: string) {
+  const status = getOllamaModelStatusElement();
+  if (status) {
+    status.textContent = message;
+  }
+}
+
+function getOllamaModelFallbackOptions(savedValue: string, label: string): ModelOption[] {
+  if (savedValue) {
+    return [{ label: savedValue, value: savedValue }];
+  }
+  return [{ label, value: "" }];
+}
+
+async function fetchCachedOllamaModels(port: string): Promise<ModelOption[]> {
+  const trimmedPort = port.trim();
+  if (!trimmedPort) {
+    return [];
+  }
+
+  if (ollamaModelsCache?.port === trimmedPort) {
+    return ollamaModelsCache.models;
+  }
+
+  const models = await fetchOllamaRunningModels(trimmedPort);
+  ollamaModelsCache = {
+    port: trimmedPort,
+    models,
+  };
+  return models;
+}
+
+async function renderOllamaModelSelect(forceRefresh = false) {
+  const doc = getPrefsDocument();
+  const mount = getOllamaModelMount();
+  if (!mount) {
+    return;
+  }
+
+  const savedValue = getStringPref("ollamaModel");
+  const portInput = doc.getElementById(
+    `zotero-prefpane-${config.addonRef}-local-port`,
+  ) as HTMLInputElement | null;
+  const port = String(portInput?.value ?? getStringPref("localPort")).trim();
+  const modelSelectId = `zotero-prefpane-${config.addonRef}-ollama-model`;
+
+  if (!port) {
+    const options = getOllamaModelFallbackOptions(
+      savedValue,
+      OLLAMA_ENTER_PORT_MESSAGE,
+    );
+    ztoolkit.UI.replaceElement(
+      createModelMenuConfig(
+        modelSelectId,
+        "ollamaModel",
+        savedValue,
+        options,
+        true,
+      ),
+      mount,
+    );
+    setOllamaModelStatus(OLLAMA_ENTER_PORT_MESSAGE);
+    return;
+  }
+
+  if (forceRefresh) {
+    ollamaModelsCache = undefined;
+  }
+
+  const token = ++ollamaFetchToken;
+  ztoolkit.UI.replaceElement(
+    createModelMenuConfig(
+      modelSelectId,
+      "ollamaModel",
+      savedValue,
+      getOllamaModelFallbackOptions(savedValue, getString("pref-model-loading")),
+      true,
+    ),
+    mount,
+  );
+  setOllamaModelStatus(getString("pref-model-loading"));
+
+  try {
+    const options = await fetchCachedOllamaModels(port);
+    if (token !== ollamaFetchToken) {
+      return;
+    }
+
+    const finalOptions = options.length
+      ? options
+      : getOllamaModelFallbackOptions(
+          savedValue,
+          OLLAMA_NONE_RUNNING_MESSAGE,
+        );
+    const selectedValue =
+      savedValue && finalOptions.some((option) => option.value === savedValue)
+        ? savedValue
+        : finalOptions[0]?.value ?? "";
+
+    ztoolkit.UI.replaceElement(
+      createModelMenuConfig(
+        modelSelectId,
+        "ollamaModel",
+        selectedValue,
+        finalOptions,
+        !options.length,
+      ),
+      getOllamaModelMount() ?? mount,
+    );
+    setOllamaModelStatus(
+      options.length ? "" : OLLAMA_NONE_RUNNING_MESSAGE,
+    );
+
+    if (selectedValue !== savedValue) {
+      setPref("ollamaModel", selectedValue);
+    }
+  } catch (error) {
+    if (token !== ollamaFetchToken) {
+      return;
+    }
+
+    const options = getOllamaModelFallbackOptions(
+      savedValue,
+      getString("pref-model-load-failed"),
+    );
+    ztoolkit.UI.replaceElement(
+      createModelMenuConfig(
+        modelSelectId,
+        "ollamaModel",
+        savedValue,
+        options,
+        true,
+      ),
+      getOllamaModelMount() ?? mount,
+    );
+    const message = error instanceof Error ? error.message : String(error);
+    setOllamaModelStatus(
+      `${getString("pref-model-load-failed")}${message ? `: ${message}` : ""}`,
+    );
   }
 }
 
@@ -388,10 +620,11 @@ function syncLlmSettingsVisibility() {
   const menulist = doc.querySelector(
     `#zotero-prefpane-${config.addonRef}-llm-provider`,
   ) as XUL.MenuList | null;
-  const provider =
+  const provider = normalizeProviderPreference(
     (menulist?.value as LlmProviderPreference | undefined) ||
-    (getStringPref("llmProvider") as LlmProviderPreference) ||
-    "local";
+      getStringPref("llmProvider") ||
+      "ollama",
+  );
   const localBox = doc.getElementById(
     `${config.addonRef}-local-settings`,
   ) as HTMLElement | null;
@@ -403,7 +636,7 @@ function syncLlmSettingsVisibility() {
   ) as HTMLElement | null;
 
   if (localBox) {
-    localBox.hidden = provider !== "local";
+    localBox.hidden = provider !== "ollama";
   }
   if (openaiBox) {
     openaiBox.hidden = provider !== "openai";

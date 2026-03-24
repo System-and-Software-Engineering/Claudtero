@@ -5,6 +5,7 @@ import type { AIProvider } from "./ai/modelCatalog";
 import { renderMarkdown } from "./chat/markdown";
 import { env } from "../config/env";
 import { getPref } from "../utils/prefs";
+import { fetchOllamaRunningModels } from "./ai/ollama";
 
 
 type ChatEntry = {
@@ -107,6 +108,10 @@ let currentRenderMessages: (() => void) | null = null;
 let currentRenderHighlightedSelection: (() => void) | null = null;
 let currentItemID: number | null = null;
 let currentBody: HTMLElement | null = null;
+
+function normalizeProviderPreference(value: string): AIProvider {
+  return value === "local" ? "ollama" : (value as AIProvider);
+}
 
 /**
  * Send a message to the sidebar chat from external sources (e.g., context menu, popup).
@@ -443,20 +448,101 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
   /**
    * Helper: rebuild the model select based on the chosen provider
    */
-  const renderModelsForProvider = (provider: AIProvider) => {
+  const applyModelOptions = (
+    options: Array<{ label: string; value: string }>,
+    preferredValue?: string,
+  ) => {
     modelSelect.textContent = "";
-    const entry = providers.find((p) => p.provider === provider);
-    if (!entry) return;
-
-    for (const m of entry.models) {
+    for (const option of options) {
       const opt = doc.createElement("option");
-      opt.value = m.value; // API model id
-      opt.textContent = m.label; // UI label
+      opt.value = option.value;
+      opt.textContent = option.label;
+      opt.disabled = !option.value;
       modelSelect.appendChild(opt);
     }
 
-    // Default to first model
-    modelSelect.value = entry.models[0]?.value ?? "";
+    modelSelect.value =
+      (preferredValue && options.some((option) => option.value === preferredValue)
+        ? preferredValue
+        : options.find((option) => option.value)?.value) ?? "";
+  };
+
+  let modelRefreshToken = 0;
+
+  const renderModelsForProvider = async (provider: AIProvider) => {
+    const entry = providers.find((p) => p.provider === provider);
+    if (!entry) return;
+
+    const savedOllamaModel = String(getPref("ollamaModel") ?? "").trim();
+    const savedOpenAiModel = String(getPref("openaiModel") ?? "").trim();
+    const savedGoetheModel = String(getPref("goetheModel") ?? "").trim();
+    const preferredValue =
+      provider === "ollama"
+        ? savedOllamaModel
+        : provider === "openai"
+          ? savedOpenAiModel
+          : provider === "goethe"
+            ? savedGoetheModel
+            : modelSelect.value;
+
+    modelSelect.disabled = false;
+    applyModelOptions(entry.models, preferredValue);
+
+    if (provider !== "ollama") {
+      return;
+    }
+
+    const port = String(getPref("localPort") ?? "").trim();
+    const token = ++modelRefreshToken;
+
+    if (!port) {
+      modelSelect.disabled = true;
+      applyModelOptions(
+        [{ label: "Configure the Ollama port in Preferences", value: "" }],
+        "",
+      );
+      return;
+    }
+
+    modelSelect.disabled = true;
+    applyModelOptions(
+      [{ label: "Loading running Ollama models...", value: savedOllamaModel }],
+      savedOllamaModel,
+    );
+
+    try {
+      const models = await fetchOllamaRunningModels(port);
+      if (token !== modelRefreshToken || providerSelect.value !== provider) {
+        return;
+      }
+
+      if (!models.length) {
+        modelSelect.disabled = true;
+        applyModelOptions(
+          [{ label: "No running Ollama models found", value: "" }],
+          "",
+        );
+        return;
+      }
+
+      modelSelect.disabled = false;
+      applyModelOptions(models, preferredValue);
+    } catch (error) {
+      if (token !== modelRefreshToken || providerSelect.value !== provider) {
+        return;
+      }
+
+      modelSelect.disabled = true;
+      applyModelOptions(
+        [
+          {
+            label: `Failed to load Ollama models: ${error instanceof Error ? error.message : String(error)}`,
+            value: "",
+          },
+        ],
+        "",
+      );
+    }
   };
 
   // Fill provider select
@@ -469,17 +555,18 @@ function onRender({ body, item }: { body: HTMLElement; item: Zotero.Item }) {
 
   // Default provider = first in catalog
   const configuredProvider = String(getPref("llmProvider") ?? "");
+  const normalizedProvider = normalizeProviderPreference(configuredProvider);
   const defaultProvider = providers.some(
-    (provider) => provider.provider === configuredProvider,
+    (provider) => provider.provider === normalizedProvider,
   )
-    ? (configuredProvider as AIProvider)
-    : (providers[0]?.provider ?? "openai");
+    ? normalizedProvider
+    : (providers[0]?.provider ?? "ollama");
   providerSelect.value = defaultProvider;
-  renderModelsForProvider(defaultProvider);
+  void renderModelsForProvider(defaultProvider);
 
   // Update models when provider changes
   providerSelect.addEventListener("change", () => {
-    renderModelsForProvider(providerSelect.value as AIProvider);
+    void renderModelsForProvider(providerSelect.value as AIProvider);
   });
 
   // Inner wrapper for input + send icon

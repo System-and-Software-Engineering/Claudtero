@@ -9,6 +9,7 @@ declare namespace _ZoteroTypes {
     PluginPrefsMap: {
       "llmProvider": string;
       "localPort": string;
+      "ollamaModel": string;
       "openaiApiKey": string;
       "openaiModel": string;
       "openaiTemp": string;

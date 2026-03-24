@@ -1,4 +1,6 @@
 import type { AIProvider } from "../ai/modelCatalog";
+import { sendOllamaChat } from "./ollama";
+import { getPref } from "../../utils/prefs";
 
 /**
  * Chat completion client for OpenAI-compatible providers.
@@ -61,6 +63,8 @@ export interface ChatCompletionParams {
  */
 function getBaseUrl(provider: AIProvider): string {
     switch (provider) {
+        case "ollama":
+            throw new Error("Ollama uses the native local API and does not expose an OpenAI-compatible base URL here.");
         case "openai":
             return "https://api.openai.com/v1";
         case "openrouter":
@@ -125,6 +129,18 @@ export async function sendChatCompletions(
         maxTokens,
         responseFormat,
     } = params;
+
+    if (provider === "ollama") {
+        const port = String(getPref("localPort") ?? "").trim();
+        return sendOllamaChat({
+            port,
+            model,
+            messages,
+            temperature,
+            maxTokens,
+            responseFormat,
+        });
+    }
 
     if (!apiKey) {
         throw new Error(`Missing API Key for provider: ${provider}`);

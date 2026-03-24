@@ -1,5 +1,6 @@
-pref("llmProvider", "local");
-pref("localPort", "8000");
+pref("llmProvider", "ollama");
+pref("localPort", "11434");
+pref("ollamaModel", "");
 pref("openaiApiKey", "");
 pref("openaiModel", "gpt-4");
 pref("openaiTemp", "0.7");

@@ -55,6 +55,8 @@ function parseTemperature(value: unknown, fallback = 0.2): number {
 
 function getTrimmedPref(
     key:
+        | "localPort"
+        | "ollamaModel"
         | "openaiApiKey"
         | "openaiModel"
         | "openaiPrompt"
@@ -115,6 +117,13 @@ function resolveProviderSettings(
     const requestedModelId = requestedModel.trim();
 
     switch (provider) {
+        case "ollama":
+            return {
+                apiKey: "",
+                model: requestedModelId || getTrimmedPref("ollamaModel"),
+                temperature: 0.2,
+                systemPrompt: DEFAULT_SYSTEM_PROMPT,
+            };
         case "openai": {
             const configuredPrompt = getTrimmedPref("openaiPrompt");
             return {
