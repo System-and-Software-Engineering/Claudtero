@@ -16,9 +16,14 @@ type ChatEntry = {
 type PendingHighlightedSelection = { text: string; pageNumber: number | null };
 const chatsByItem: Record<number, ChatEntry[]> = {};
 const pendingHighlightedSelectionsByItem: Record<number, PendingHighlightedSelection | undefined> = {};
+const MAX_SELECTED_TEXT_PREVIEW_LENGTH = 180;
 
 function formatSelectedText(text: string): string {
-  return `“${text.trim()}”`;
+  const normalized = text.replace(/\s+/g, " ").trim();
+  const preview = normalized.length > MAX_SELECTED_TEXT_PREVIEW_LENGTH
+    ? `${normalized.slice(0, MAX_SELECTED_TEXT_PREVIEW_LENGTH - 1).trimEnd()}…`
+    : normalized;
+  return `“${preview}”`;
 }
 
 function buildSelectedTextPreview(doc: Document, selectedText: string): HTMLElement {
@@ -31,7 +36,12 @@ function buildSelectedTextPreview(doc: Document, selectedText: string): HTMLElem
 
   const content = doc.createElement("div");
   content.className = "chat-pane__message-selection-content";
-  content.textContent = formatSelectedText(selectedText);
+
+  const text = doc.createElement("div");
+  text.className = "chat-pane__message-selection-text";
+  text.textContent = formatSelectedText(selectedText);
+
+  content.appendChild(text);
 
   preview.append(icon, content);
   return preview;
