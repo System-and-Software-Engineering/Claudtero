@@ -276,66 +276,6 @@ function chooseNearestNonEmptyPages(options: {
     .sort((left, right) => left.pageNumber - right.pageNumber);
 }
 
-function splitFullTextIntoApproximatePages(
-  fullText: string,
-  pageCount: number,
-): PdfPageText[] {
-  const normalized = fullText.replace(/\r\n/g, "\n").trim();
-  if (!normalized || pageCount < 1) {
-    return [];
-  }
-
-  const estimatedChunkSize = Math.max(1, Math.ceil(normalized.length / pageCount));
-  const pages: PdfPageText[] = [];
-  let cursor = 0;
-
-  for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
-    if (cursor >= normalized.length) {
-      pages.push({ pageNumber, text: "" });
-      continue;
-    }
-
-    if (pageNumber === pageCount) {
-      pages.push({ pageNumber, text: normalized.slice(cursor).trim() });
-      cursor = normalized.length;
-      continue;
-    }
-
-    const targetEnd = Math.min(normalized.length, cursor + estimatedChunkSize);
-    let splitIndex = normalized.lastIndexOf("\n\n", targetEnd);
-    if (splitIndex <= cursor) {
-      splitIndex = normalized.lastIndexOf("\n", targetEnd);
-    }
-    if (splitIndex <= cursor) {
-      splitIndex = normalized.lastIndexOf(" ", targetEnd);
-    }
-    if (splitIndex <= cursor) {
-      splitIndex = targetEnd;
-    }
-
-    pages.push({
-      pageNumber,
-      text: normalized.slice(cursor, splitIndex).trim(),
-    });
-    cursor = splitIndex;
-  }
-
-  return pages;
-}
-
-async function getApproximateDocumentPages(
-  ztoolkit: ZToolkitLike,
-): Promise<PdfPageText[]> {
-  const fullText = await extractOpenPdfText(ztoolkit);
-  if (!fullText) {
-    return [];
-  }
-
-  const pageCount = await getOpenPdfPageCount(ztoolkit);
-  const safePageCount = pageCount > 0 ? pageCount : 1;
-  return splitFullTextIntoApproximatePages(fullText, safePageCount);
-}
-
 interface PageStats {
   pageNumber: number;
   text: string;
@@ -431,20 +371,16 @@ function computeBm25Matches(
   return scoredPages.map((page) => page.pageNumber);
 }
 
-function buildPageWindowHeader(pageNumber: number, approximate = false): string {
-  return approximate
-    ? `Document context mode: page_window (approximated from whole-document extraction for current page ${pageNumber} with neighbors)`
-    : `Document context mode: page_window (current page ${pageNumber} with neighbors)`;
+function buildPageWindowHeader(pageNumber: number): string {
+  return `Document context mode: page_window (current page ${pageNumber} with neighbors)`;
 }
 
 function buildBestEffortHeader(pageNumber: number): string {
   return `Document context mode: page_window (best-effort nearest non-empty pages around ${pageNumber})`;
 }
 
-function buildSinglePageHeader(pageNumber: number, approximate = false): string {
-  return approximate
-    ? `Document context mode: page_window (approximated selected text source page ${pageNumber})`
-    : `Document context mode: page_window (selected text source page ${pageNumber})`;
+function buildSinglePageHeader(pageNumber: number): string {
+  return `Document context mode: page_window (selected text source page ${pageNumber})`;
 }
 
 async function buildPageWindowContext(ztoolkit: ZToolkitLike): Promise<string> {
@@ -471,37 +407,7 @@ async function buildPageWindowContext(ztoolkit: ZToolkitLike): Promise<string> {
 
   const pages = await extractOpenPdfAllPageTexts(ztoolkit);
   if (!pages.length) {
-    const approximatePages = await getApproximateDocumentPages(ztoolkit);
-    if (!approximatePages.length) {
-      return "";
-    }
-
-    const approximateAnchorPage =
-      currentPage && currentPage <= approximatePages.length ? currentPage : 1;
-    const approximatePageNumbers = buildNeighborPages(
-      [approximateAnchorPage],
-      approximatePages.length,
-    );
-    const approximateSelection = approximatePages.filter((page) =>
-      approximatePageNumbers.includes(page.pageNumber),
-    );
-    const approximateContext = formatPageContexts(
-      approximateSelection,
-      buildPageWindowHeader(approximateAnchorPage, true),
-    );
-
-    if (approximateContext) {
-      return approximateContext;
-    }
-
-    const nearestApproximatePages = chooseNearestNonEmptyPages({
-      pages: approximatePages,
-      anchorPage: approximateAnchorPage,
-    });
-    return formatPageContexts(
-      nearestApproximatePages,
-      buildBestEffortHeader(approximateAnchorPage),
-    );
+    return "";
   }
 
   const fallbackCurrentPage =
@@ -525,29 +431,7 @@ async function buildPageWindowContext(ztoolkit: ZToolkitLike): Promise<string> {
     nearestPages,
     buildBestEffortHeader(fallbackCurrentPage),
   );
-  if (nearestContext) {
-    return nearestContext;
-  }
-
-  const approximatePages = await getApproximateDocumentPages(ztoolkit);
-  if (!approximatePages.length) {
-    return "";
-  }
-
-  const approximateCurrentPage =
-    currentPage && currentPage <= approximatePages.length ? currentPage : 1;
-  const approximatePageNumbers = buildNeighborPages(
-    [approximateCurrentPage],
-    approximatePages.length,
-  );
-  const approximateSelection = approximatePages.filter((page) =>
-    approximatePageNumbers.includes(page.pageNumber),
-  );
-
-  return formatPageContexts(
-    approximateSelection,
-    buildPageWindowHeader(approximateCurrentPage, true),
-  );
+  return nearestContext;
 }
 
 async function buildBm25WindowContext(
@@ -556,9 +440,7 @@ async function buildBm25WindowContext(
   keywords: string[],
 ): Promise<string> {
   const extractedPages = await extractOpenPdfAllPageTexts(ztoolkit);
-  const pages = extractedPages.length
-    ? extractedPages
-    : await getApproximateDocumentPages(ztoolkit);
+  const pages = extractedPages;
   if (!pages.length) {
     return "";
   }
@@ -617,17 +499,7 @@ export async function buildSinglePageContext(options: {
     [{ pageNumber, text: extractedPageText }],
     buildSinglePageHeader(pageNumber),
   );
-  if (extractedContext) {
-    return extractedContext;
-  }
-
-  const approximatePages = await getApproximateDocumentPages(ztoolkit);
-  const approximatePageText =
-    approximatePages.find((page) => page.pageNumber === pageNumber)?.text ?? "";
-  return formatPageContexts(
-    [{ pageNumber, text: approximatePageText }],
-    buildSinglePageHeader(pageNumber, true),
-  );
+  return extractedContext;
 }
 
 const CONTEXT_BUILDERS: Record<ContextMode, ContextBuilder> = {

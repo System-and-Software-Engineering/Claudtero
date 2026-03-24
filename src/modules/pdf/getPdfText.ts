@@ -29,12 +29,20 @@ interface ReaderWindowLike {
   PDFViewerApplication?: PdfViewerApplicationLike;
 }
 
+interface WrappedObjectLike<T = unknown> {
+  wrappedJSObject?: T;
+}
+
 interface PdfViewerApplicationLike {
   initializedPromise?: Promise<unknown>;
   pdfDocument?: PdfDocumentLike | null;
+  pageLabelToPageNumber?: (label: string) => number;
   pdfViewer?: {
     pdfDocument?: PdfDocumentLike | null;
     currentPageNumber?: number | null;
+    _currentPageNumber?: number | null;
+    currentPageLabel?: string | null;
+    pageLabelToPageNumber?: (label: string) => number;
   };
 }
 
@@ -46,6 +54,11 @@ interface PdfDocumentLike {
 interface PdfPageLike {
   getTextContent(): Promise<{ items?: Array<{ str?: string; hasEOL?: boolean }> }>;
   cleanup?(): void;
+}
+
+interface PdfPageLikePartial {
+  getTextContent?: unknown;
+  cleanup?: unknown;
 }
 
 interface RecognizerPageObjectLike {
@@ -105,8 +118,16 @@ function getPdfViewerApplication(
   reader: ZoteroReaderLike | null,
 ): PdfViewerApplicationLike | null {
   const readerWindow = getReaderWindow(reader);
-  const wrappedWindow = readerWindow?.wrappedJSObject ?? readerWindow;
+  const wrappedWindow = unwrapRuntimeObject(readerWindow);
   return wrappedWindow?.PDFViewerApplication ?? null;
+}
+
+function unwrapRuntimeObject<T>(value: T | null | undefined): T | null {
+  if (!value || typeof value !== "object") {
+    return value ?? null;
+  }
+
+  return ((value as WrappedObjectLike<T>).wrappedJSObject ?? value) as T;
 }
 
 async function getOpenPdfDocument(
@@ -123,11 +144,55 @@ async function getOpenPdfDocument(
     await pdfApplication.initializedPromise;
   }
 
-  return pdfApplication?.pdfDocument ?? pdfApplication?.pdfViewer?.pdfDocument ?? null;
+  return unwrapRuntimeObject(
+    pdfApplication?.pdfDocument ?? pdfApplication?.pdfViewer?.pdfDocument ?? null,
+  );
 }
 
 function normalizeText(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizePositiveNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value > 0
+    ? value
+    : null;
+}
+
+function normalizePositiveIntegerString(value: unknown): number | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    return null;
+  }
+
+  const parsed = Number(trimmed);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function resolveCurrentPageFromLabel(
+  pdfApplication: PdfViewerApplicationLike | null,
+): number | null {
+  const currentPageLabel = normalizeText(pdfApplication?.pdfViewer?.currentPageLabel);
+  if (!currentPageLabel) {
+    return null;
+  }
+
+  const pageLabelToPageNumber =
+    pdfApplication?.pdfViewer?.pageLabelToPageNumber ??
+    pdfApplication?.pageLabelToPageNumber;
+  if (typeof pageLabelToPageNumber === "function") {
+    const resolvedPageNumber = pageLabelToPageNumber(currentPageLabel);
+    const normalizedPageNumber = normalizePositiveNumber(resolvedPageNumber);
+    if (normalizedPageNumber) {
+      return normalizedPageNumber;
+    }
+  }
+
+  return normalizePositiveIntegerString(currentPageLabel);
 }
 
 function extractLooseText(value: unknown): string {
@@ -169,9 +234,39 @@ function collectNestedText(values: unknown[]): string {
   return parts.join(" ").trim();
 }
 
-async function extractPdfPageText(pdfPage: PdfPageLike): Promise<string> {
+function isPdfPageLike(pdfPage: unknown): pdfPage is PdfPageLike {
+  const resolvedPage = unwrapRuntimeObject(pdfPage);
+  return (
+    !!resolvedPage &&
+    typeof resolvedPage === "object" &&
+    typeof (resolvedPage as PdfPageLikePartial).getTextContent === "function"
+  );
+}
+
+function describeObjectKeys(value: unknown): string {
+  if (!value || typeof value !== "object") {
+    return typeof value;
+  }
+
+  const keys = Object.keys(value);
+  return keys.length ? keys.join(", ") : "<no enumerable keys>";
+}
+
+async function extractPdfPageText(
+  pdfPage: unknown,
+  ztoolkit?: ZToolkitLike,
+): Promise<string> {
+  const resolvedPage = unwrapRuntimeObject(pdfPage);
+
+  if (!isPdfPageLike(resolvedPage)) {
+    ztoolkit?.log(
+      `[extractPdfPageText] Page object does not expose getTextContent; keys: ${describeObjectKeys(resolvedPage)}`,
+    );
+    return "";
+  }
+
   try {
-    const textContent = await pdfPage.getTextContent();
+    const textContent = await resolvedPage.getTextContent();
     return (textContent.items ?? [])
       .map((item) => {
         if (!item?.str) {
@@ -182,8 +277,8 @@ async function extractPdfPageText(pdfPage: PdfPageLike): Promise<string> {
       .join("")
       .trim();
   } finally {
-    if (typeof pdfPage.cleanup === "function") {
-      pdfPage.cleanup();
+    if (typeof resolvedPage.cleanup === "function") {
+      resolvedPage.cleanup();
     }
   }
 }
@@ -250,7 +345,7 @@ async function extractAllPdfPageTexts(
   const pages: PdfPageText[] = [];
 
   for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
-    const pdfPage = await pdfDocument.getPage(pageNumber);
+    const pdfPage = unwrapRuntimeObject(await pdfDocument.getPage(pageNumber));
     pages.push({
       pageNumber,
       text: await extractPdfPageText(pdfPage),
@@ -332,9 +427,20 @@ export async function extractOpenPdfText(ztoolkit: ZToolkitLike): Promise<string
 }
 
 export function getCurrentOpenPdfPage(ztoolkit: ZToolkitLike): number | null {
-  const currentPage = getPdfViewerApplication(getActiveReader(ztoolkit))?.pdfViewer
-    ?.currentPageNumber;
-  return typeof currentPage === "number" && currentPage > 0 ? currentPage : null;
+  const pdfApplication = getPdfViewerApplication(getActiveReader(ztoolkit));
+  const labelPageNumber = resolveCurrentPageFromLabel(pdfApplication);
+  if (labelPageNumber) {
+    return labelPageNumber;
+  }
+
+  const currentPageNumber = normalizePositiveNumber(
+    pdfApplication?.pdfViewer?.currentPageNumber,
+  );
+  if (currentPageNumber) {
+    return currentPageNumber;
+  }
+
+  return normalizePositiveNumber(pdfApplication?.pdfViewer?._currentPageNumber);
 }
 
 export async function getOpenPdfPageCount(ztoolkit: ZToolkitLike): Promise<number> {
@@ -367,8 +473,11 @@ export async function extractOpenPdfPageText(
 
     const pdfDocument = await getOpenPdfDocument(ztoolkit);
     if (pdfDocument) {
-      const pdfPage = await pdfDocument.getPage(pageNumber);
-      const pageText = await extractPdfPageText(pdfPage);
+      const pdfPage = unwrapRuntimeObject(await pdfDocument.getPage(pageNumber));
+      const pageText = await extractPdfPageText(pdfPage, ztoolkit);
+      ztoolkit.log(
+        `[extractOpenPdfPageText] Page ${pageNumber} PDF.js text:\n${pageText}`,
+      );
       if (pageText) {
         return pageText;
       }
