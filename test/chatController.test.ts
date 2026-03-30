@@ -17,7 +17,7 @@ import {
 } from "./helpers/testSupport";
 
 describe("chat controller", function () {
-  let snapshot: TestGlobalsSnapshot;
+let snapshot: TestGlobalsSnapshot;
 
   beforeEach(function () {
     snapshot = snapshotTestGlobals();
