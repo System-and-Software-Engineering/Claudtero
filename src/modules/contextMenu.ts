@@ -41,7 +41,7 @@ export class ContextMenu {
       ContextMenu.askButtonSelector,
     ) as HTMLButtonElement | null;
     if (existingButton) {
-      return;
+      existingButton.remove();
     }
 
     // Create button

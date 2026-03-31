@@ -6,12 +6,25 @@ class FakeElement {
   attributes = new Map<string, string>();
   style = { cssText: "", background: "", boxShadow: "", borderColor: "" };
   innerHTML = "";
+  parentNode: FakeElement | null = null;
 
   constructor(public readonly tagName: string, private readonly className = "") {}
 
   appendChild(child: FakeElement): FakeElement {
+    child.parentNode = this;
     this.childNodes.push(child);
     return child;
+  }
+
+  remove() {
+    if (!this.parentNode) {
+      return;
+    }
+
+    this.parentNode.childNodes = this.parentNode.childNodes.filter(
+      (child) => child !== this,
+    );
+    this.parentNode = null;
   }
 
   setAttribute(name: string, value: string) {
@@ -98,5 +111,40 @@ describe("context menu", function () {
     assert.isNotNull(askButton);
     assert.strictEqual(popup.childNodes.length, 1);
     assert.include(popup.childNodes[0].innerHTML, "Ask with Claudtero");
+  });
+
+  it("replaces the existing Ask with Claudtero button when the popup is re-rendered", function () {
+    const popup = new FakeElement("div", "selection-popup");
+    const doc = new FakeDocument(popup);
+    const firstEvent = {
+      reader: { itemID: 1 },
+      doc,
+      params: {
+        annotation: {
+          text: "First selection",
+          position: JSON.stringify({ pageIndex: 0 }),
+        },
+      },
+    } as unknown as _ZoteroTypes.Reader.EventParams<"renderTextSelectionPopup">;
+    const secondEvent = {
+      reader: { itemID: 1 },
+      doc,
+      params: {
+        annotation: {
+          text: "Second selection",
+          position: JSON.stringify({ pageIndex: 1 }),
+        },
+      },
+    } as unknown as _ZoteroTypes.Reader.EventParams<"renderTextSelectionPopup">;
+
+    ContextMenu.onReaderPopupShow(firstEvent);
+    const firstButton = popup.childNodes[0];
+
+    ContextMenu.onReaderPopupShow(secondEvent);
+    const secondButton = popup.childNodes[0];
+
+    assert.strictEqual(popup.childNodes.length, 1);
+    assert.notStrictEqual(firstButton, secondButton);
+    assert.include(secondButton.innerHTML, "Ask with Claudtero");
   });
 });
